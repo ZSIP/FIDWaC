@@ -13,19 +13,19 @@ The package works well in a wide range of geoinformatics applications, including
 ---
 
 ## Table of contents
-1 [Features and functionalities](#features).
-2 [Tool structure](#structure).
-   1. interpolation_FIT.py](#interpolation)
-   2. compression.py](#compression).
+1. [Features and functionalities](#features).
+2. [Tool structure](#structure).
+   1. [interpolation_FIT.py](#interpolation).
+   2. [compression.py](#compression).
 3. [Operation diagrams](#schemes).
    1. [Scheme of operation interpolation_FIT.py](#schema-interpolation).
    2. [Compression.py workflow](#schemat-compression).
 4. [System requirements](#requirements).
-5 [Configuration and startup](#configuration).
+5. [Configuration and startup](#configuration).
    1. [Example use of interpolation_FIT.py](#use-interpolation).
    2. [Example use of compression.py](#use-compression).
-6 [Key functions](#key-functions).
-7 [Advantages and potential uses](#benefits).
+6. [Key functions](#key-functions).
+7. [Advantages and potential uses](#benefits).
 8. [Concluding remarks](#remarks).
 
 ---
@@ -133,39 +133,38 @@ Script for **lossy advanced compression of raster data** (e.g. GeoTIFF files) us
 <a name="schema-interpolation"></a>.
 ### 3.1 The working scheme `interpolation_FIT.py`.
 
-``mermaid
+```mermaid
 graph TB
-    A[Load input data] --> B[Remove invalid data].
-    B --> C[Preparing the interpolation grid].
-    C --> D[Construction of KDTree].
-    D --> E[Searching for N nearest neighbors].
+    A[Load input data] --> B[Remove invalid data]
+    B --> C[Preparing the interpolation grid]
+    C --> D[Construction of KDTree]
+    D --> E[Searching for N nearest neighbors]
     E --> F{Selecting the IDW method}
-    F -->|NumPy + numexpr| G1[Standard IDW interpolation].
-    F -->|Dask| G2[Parallel IDW interpolation].
-    G1 --> H[Save results].
+    F -->|NumPy + numexpr| G1[Standard IDW interpolation]
+    F -->|Dask| G2[Parallel IDW interpolation]
+    G1 --> H[Save results]
     G2 --> H
-    H --> I[Export to GeoTIFF].
-    H --> J[Export to CSV].
-    H --> K[Export to Surfer GRD].
+    H --> I[Export to GeoTIFF]
+    H --> J[Export to CSV]
+    H --> K[Export to Surfer GRD]
 ```
 
 <a name="schema-compression"></a>.
 ### 3.2 The working schema `compression.py`.
 
-``mermaid
+```mermaid
 graph TB
-    A[Load GeoTIFF raster] --> B[Detect special values].
-    B --> C[Divide into N×N blocks].
-    C --> D{Block type?}
-    D -->|Special values only| E1[Binary + Base64 encoding].
+    A[Load GeoTIFF raster] --> B[Detect special values]
+    B --> C[Divide into N×N blocks]
+    C --> D{Block type decision}
+    D -->|Special values only| E1[Binary + Base64 encoding]
     D -->|Contains data| E2[2D-DCT + zigzag encoding]
-    E2 --> F[Iterative coefficient trimming].
+    E2 --> F[Iterative coefficient trimming]
     F --> G[Processing error checking]
-    E1 --> H[Serialization of data].
+    E1 --> H[Serialization of data]
     G --> H
-    H --> I[Additional 7z compression].
+    H --> I[Additional 7z compression]
 ```
-
 ---
 
 <a name="requirements"></a>.
