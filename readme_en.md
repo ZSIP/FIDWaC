@@ -228,7 +228,7 @@ Configuration of the tool is done through the `config.json` file, which contains
   "results_directory": "./results_compression/",
   "source_directory": "./source/",
   "accuracy": 0.01,
-  "matrix": 8,
+  "matrix": 16,
   "decimal": 2,
   "type_dct": 2
 }
