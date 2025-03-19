@@ -340,7 +340,7 @@ Configuration for the compression module (`compress_function.py`):
 
 Click the link below to download the data:
 
-[📥 Download Data]([URL_TO_FILE](https://zutedupl-my.sharepoint.com/:f:/g/personal/alysko_zut_edu_pl/Et_gh1jMHc1FpyUV54IvqbIBSMft-kS_2VjHdPQXj-GtOg?e=8sZVvT))
+[URL_TO_FILE](https://zutedupl-my.sharepoint.com/:f:/g/personal/alysko_zut_edu_pl/Et_gh1jMHc1FpyUV54IvqbIBSMft-kS_2VjHdPQXj-GtOg?e=8sZVvT))
 
 ```bash
 # Basic usage with a shapefile
