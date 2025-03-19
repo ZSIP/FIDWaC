@@ -324,10 +324,11 @@ Configuration for the compression module (`compress_function.py`):
 
     results_directory: Directory where the processing results will be saved.
     source_directory: Directory where the source data is located.
-    accuracy: Accuracy of the compression algorithm.
+    accuracy: Accuracy of the compression algorithm. Setting accuracy to 0 allows for saving data with the maximum possible accuracy relative to the original, but does not guarantee lossless compression.
     matrix: Matrix size used in the compression process.
     decimal: Number of decimal places to use in the output.
     type_dct: Type of Discrete Cosine Transform (DCT) to use.
+
 
 
 <a name="usage"></a>
