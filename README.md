@@ -189,7 +189,7 @@ graph TB
     B --> C[Divide into N×N blocks]
     C --> D[Distribute blocks to<br>multiple CPU cores]
     D --> E{Block type classification}
-    E -->|Special values only| F1[RLE encoding]
+    E -->|Special values only <br> no data, 0 | F1[RLE encoding]
     E -->|Contains data| F2[2D-DCT + zigzag encoding]
     F2 --> G[Iterative coefficient<br>pruning for accuracy]
     G --> H[Quality verification<br>error checking]
