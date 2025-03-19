@@ -1,0 +1,18 @@
+{
+    "results_directory": "./results/",
+    "z_field_name": "z",
+    "N": 10,
+    "resolution": 0.1,
+    "max_distance": 5,
+    "leafsize": 10,
+    "weights": 2,
+    "rasterCrs": "epsg:32633",
+    "save_data_to_shp": false,
+    "idw_dask": false,
+    "idw_numpy": true,
+    "knn_calculate": false,
+    "knn_image": false,
+    "interpolation_image_create": true,
+    "csv_result": false,
+    "surfer_grd": true
+}
