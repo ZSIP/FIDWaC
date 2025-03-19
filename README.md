@@ -288,6 +288,23 @@ Configuration for the interpolation module (`interpolation_FIT.py`):
   "surfer_grd": false
 }
 ```
+    results_directory: Directory where the processing results will be saved.
+    z_field_name: Name of the field representing Z values (elevations) in the input data.
+    N: Number of neighbors used in the IDW (Inverse Distance Weighting) method.
+    resolution: Resolution of the interpolation grid.
+    max_distance: Maximum search distance for neighbors.
+    leafsize: Leaf size for the KDTree structure.
+    weights: Weights used in IDW calculations.
+    rasterCrs: Coordinate reference system for the output raster.
+    save_data_to_shp: Flag indicating whether to save data to a Shapefile.
+    idw_dask: Flag indicating whether to use Dask for IDW calculations.
+    idw_numpy: Flag indicating whether to use NumPy for IDW calculations.
+    knn_calculate: Flag indicating whether to calculate KNN (K-nearest neighbors).
+    knn_image: Flag indicating whether to create a KNN image.
+    interpolation_image_create: Flag indicating whether to create an interpolation image.
+    csv_result: Flag indicating whether to save results to a CSV file.
+    surfer_grd: Flag indicating whether to save results in Surfer grid format.
+
 
 <a name="comp-config"></a>
 ### 6.3 Compression Configuration
@@ -304,6 +321,14 @@ Configuration for the compression module (`compress_function.py`):
   "type_dct": 2
 }
 ```
+
+    results_directory: Directory where the processing results will be saved.
+    source_directory: Directory where the source data is located.
+    accuracy: Accuracy of the compression algorithm.
+    matrix: Matrix size used in the compression process.
+    decimal: Number of decimal places to use in the output.
+    type_dct: Type of Discrete Cosine Transform (DCT) to use.
+
 
 <a name="usage"></a>
 ### 6.4 Usage Examples
