@@ -167,16 +167,18 @@ def refine_dct_array(org_dct_zigzag, accuracy, agt, max_value, split_point, orig
 
 ```mermaid
 graph TB
-    A[Load input data<br>(.shp, .las, .txt, .csv)] --> B[Remove invalid data<br>NaN, -9999]
-    B --> C[Prepare interpolation grid<br>based on data extents]
-    C --> D[Construct KDTree<br>spatial index]
-    D --> E[Multi-threaded search<br>for N nearest neighbors]
+    A[Load input data] --> B[Remove invalid data]
+    B --> C[Prepare the interpolation grid]
+    C --> D[Construct KDTree]
+    D --> E[Search for N nearest neighbors]
     E --> F{Select IDW method}
-    F -->|NumPy + numexpr| G1[Standard IDW interpolation<br>single-threaded]
-    F -->|Dask| G2[Parallel IDW interpolation<br>multi-threaded]
-    G1 --> H[Process results]
+    F -->|NumPy + numexpr| G1[Standard IDW interpolation]
+    F -->|Dask| G2[Parallel IDW interpolation]
+    G1 --> H[Save results]
     G2 --> H
-    H --> I[Export to formats<br>GeoTIFF, CSV, GRD]
+    H --> I[Export to GeoTIFF]
+    H --> J[Export to CSV]
+    H --> K[Export to Surfer GRD]
 ```
 
 ### 3.2 Compression Workflow
