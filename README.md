@@ -19,9 +19,15 @@ The package is designed for efficient processing and storage of geospatial data 
 4. [System Requirements](#requirements)
 5. [Installation](#installation)
 6. [Configuration and Usage](#configuration)
-7. [Key Functions](#key-functions)
-8. [Examples](#examples)
-9. [Advantages and Applications](#benefits)
+   1. [JSON Configuration System](#json-config)
+   2. [Interpolation Configuration](#interp-config)
+   3. [Compression Configuration](#comp-config)
+   4. [Usage Examples](#usage)
+   5. [Batch Processing](#batch)
+7. [Multi-threading Capabilities](#multi-threading)
+8. [Key Functions](#key-functions)
+9. [Examples](#examples)
+10. [Advantages and Applications](#benefits)
 
 ---
 
@@ -40,6 +46,7 @@ The package is designed for efficient processing and storage of geospatial data 
   - Minimum number of observations (`NMIN`)
 - **Multiple Input Formats**: `.shp`, `.las`, `.laz`, `.txt`, `.csv`
 - **Multiple Output Formats**: GeoTIFF, CSV, Surfer GRD
+- **Multi-threaded Processing**: Utilizes all available CPU cores for spatial queries
 
 ### Advanced Raster Compression
 
@@ -47,6 +54,7 @@ The package is designed for efficient processing and storage of geospatial data 
 - **Quality-Controlled Compression** with iterative coefficient pruning to achieve preset error thresholds
 - **Intelligent Handling of NoData Values** (-9999) and zero values using binary representation with Base64 compression
 - **Optimized Storage** through binary serialization (pickle, `.npy`) with 7z archiving
+- **Parallel Block Processing**: Multi-threaded compression of image blocks
 
 ---
 
@@ -65,6 +73,7 @@ Script for advanced spatial data interpolation using IDW method and KDTree optim
 - KDTree implementation for efficient neighbor search
 - Dual interpolation engines (NumPy/numexpr and Dask)
 - Multi-format export functionality
+- Multi-threaded KDTree queries with `workers=-1` parameter
 
 **Core Functions**:
 ```python
@@ -98,9 +107,9 @@ def calculate_idw_dask(distance: np.ndarray, weights: float, value_data: np.ndar
 1. Data loading and cleaning
 2. Grid preparation based on data extents
 3. KDTree construction for spatial indexing
-4. Nearest neighbors search for each grid point
+4. Nearest neighbors search for each grid point (multi-threaded)
 5. Distance-based weight calculation
-6. IDW interpolation via optimized numerical processing
+6. IDW interpolation via optimized numerical processing (parallel with Dask)
 7. Output generation in selected formats
 
 <a name="compression"></a>
@@ -114,7 +123,7 @@ Script for lossy compression of raster data using DCT and zigzag encoding with q
 - N×N block-based processing
 - 2D-DCT transformation with coefficient optimization
 - RLE (Run-Length Encoding) for binary masks
-- Multi-threaded processing for performance
+- Multi-threaded block processing with Python's `multiprocessing` module
 
 **Core Functions**:
 ```python
@@ -141,7 +150,7 @@ def refine_dct_array(org_dct_zigzag, accuracy, agt, max_value, split_point, orig
 1. Raster data loading
 2. Special value identification and masking
 3. Division into N×N processing blocks
-4. Block classification and processing:
+4. Parallel processing of blocks using multiple CPU cores:
    - Special value-only blocks: binary encoding
    - Mixed blocks: DCT with special value handling
    - Data-only blocks: full DCT processing
@@ -158,32 +167,34 @@ def refine_dct_array(org_dct_zigzag, accuracy, agt, max_value, split_point, orig
 
 ```mermaid
 graph TB
-    A[Load input data] --> B[Remove invalid data]
-    B --> C[Preparing the interpolation grid]
-    C --> D[Construction of KDTree]
-    D --> E[Searching for N nearest neighbors]
-    E --> F{Selecting the IDW method}
-    F -->|NumPy + numexpr| G1[Standard IDW interpolation]
-    F -->|Dask| G2[Parallel IDW interpolation]
-    G1 --> H[Save results]
+    A[Load input data<br>(.shp, .las, .txt, .csv)] --> B[Remove invalid data<br>NaN, -9999]
+    B --> C[Prepare interpolation grid<br>based on data extents]
+    C --> D[Construct KDTree<br>spatial index]
+    D --> E[Multi-threaded search<br>for N nearest neighbors]
+    E --> F{Select IDW method}
+    F -->|NumPy + numexpr| G1[Standard IDW interpolation<br>single-threaded]
+    F -->|Dask| G2[Parallel IDW interpolation<br>multi-threaded]
+    G1 --> H[Process results]
     G2 --> H
-    H --> I[Export to GeoTIFF/CSV/GRD]
+    H --> I[Export to formats<br>GeoTIFF, CSV, GRD]
 ```
 
 ### 3.2 Compression Workflow
 
 ```mermaid
 graph TB
-    A[Load GeoTIFF raster] --> B[Detect special values]
+    A[Load GeoTIFF raster] --> B[Detect special values<br>0, -9999, NaN]
     B --> C[Divide into N×N blocks]
-    C --> D{Block type decision}
-    D -->|Special values only| E1[Binary + Base64 encoding]
-    D -->|Contains data| E2[2D-DCT + zigzag encoding]
-    E2 --> F[Iterative coefficient trimming]
-    F --> G[Processing error checking]
-    E1 --> H[Serialization of data]
-    G --> H
-    H --> I[Additional 7z compression]
+    C --> D[Distribute blocks to<br>multiple CPU cores]
+    D --> E{Block type classification}
+    E -->|Special values only| F1[Binary + Base64 encoding]
+    E -->|Contains data| F2[2D-DCT + zigzag encoding]
+    F2 --> G[Iterative coefficient<br>pruning for accuracy]
+    G --> H[Quality verification<br>error checking]
+    F1 --> I[Merge processed blocks]
+    H --> I
+    I --> J[Binary serialization<br>with pickle]
+    J --> K[Additional 7z compression]
 ```
 
 ---
@@ -209,7 +220,7 @@ graph TB
 
 ### Hardware Recommendations
 
-- **CPU**: Multi-core processor (recommended for Dask mode)
+- **CPU**: Multi-core processor (recommended for Dask mode and parallel compression)
 - **RAM**: 8GB minimum, 16GB+ recommended for larger datasets
 - **Storage**: Sufficient space for input/output data
 - **Platform**: Compatible with Windows and Linux
@@ -237,12 +248,27 @@ pip install -r requirements.txt
 <a name="configuration"></a>
 ## 6. Configuration and Usage
 
-Configuration is managed through the `config.json` file:
+<a name="json-config"></a>
+### 6.1 JSON Configuration System
+
+FIDWaC uses JSON format for configuration because:
+
+- **Readability**: Simple human-readable format that's easy to edit
+- **Structured**: Hierarchical structure for organizing related parameters
+- **Language-Independent**: Can be processed by various programming languages
+- **Validation**: Easy to validate against schemas
+- **No Code Changes**: Allows changing parameters without modifying code
+- **Portability**: Easily shareable between different environments
+- **Versatility**: Supports various data types (numbers, strings, booleans, arrays)
+
+<a name="interp-config"></a>
+### 6.2 Interpolation Configuration
+
+Configuration for the interpolation module (`interpolation_FIT.py`):
 
 ```json
 {
   "results_directory": "./results/",
-  "source_directory": "./source/",
   "z_field_name": "z",
   "N": 12,
   "resolution": 0.5,
@@ -250,10 +276,6 @@ Configuration is managed through the `config.json` file:
   "leafsize": 16,
   "weights": 1,
   "rasterCrs": "EPSG:2180",
-  "matrix": 8,
-  "accuracy": 0.01,
-  "decimal": 2,
-  "type_dct": 2,
   "save_data_to_shp": false,
   "idw_dask": true,
   "idw_numpy": false,
@@ -265,26 +287,102 @@ Configuration is managed through the `config.json` file:
 }
 ```
 
-### Using interpolation_FIT.py
+<a name="comp-config"></a>
+### 6.3 Compression Configuration
 
-```bash
-python interpolation_FIT.py path/to/your/data.shp
+Configuration for the compression module (`compress_function.py`):
+
+```json
+{
+  "results_directory": "./results_compression/",
+  "source_directory": "./source/",
+  "accuracy": 0.01,
+  "matrix": 8,
+  "decimal": 2,
+  "type_dct": 2
+}
 ```
 
-### Using compress_function.py
+<a name="usage"></a>
+### 6.4 Usage Examples
+
+#### Using interpolation_FIT.py
 
 ```bash
-# For compression
+# Basic usage with a shapefile
+python interpolation_FIT.py path/to/your/data.shp
+
+# Using with a LAS/LAZ file
+python interpolation_FIT.py path/to/lidar.las
+
+# Using with a CSV file
+python interpolation_FIT.py path/to/points.csv
+```
+
+#### Using compress_function.py
+
+```bash
+# For compression of a GeoTIFF file
 python compress_function.py path/to/your/geotiff.tif
 
 # For decompression (automatically detected by .7z extension)
 python compress_function.py path/to/your/compressed_file.7z
 ```
 
+<a name="batch"></a>
+### 6.5 Batch Processing
+
+FIDWaC supports batch processing of multiple files using tools like `find` and `parallel`:
+
+#### Batch Interpolation
+
+```bash
+# Process all shapefiles in a directory
+find ./data -name "*.shp" | parallel -j 4 python interpolation_FIT.py {}
+
+# Process all LAS files with a specific naming pattern
+find ./lidar -name "*_2023*.las" | parallel python interpolation_FIT.py {}
+```
+
+#### Batch Compression
+
+```bash
+# Compress all GeoTIFF files in the results directory
+find ./results -name "*.tif" | parallel -j 8 python compress_function.py {}
+
+# Decompress all compressed files
+find ./compressed -name "*.7z" | parallel python compress_function.py {}
+```
+
+Reference: Tange, O. (2022, November 22). GNU Parallel 20221122 ('Херсо́н'). Zenodo. https://doi.org/10.5281/zenodo.7347980
+
+---
+
+<a name="multi-threading"></a>
+## 7. Multi-threading Capabilities
+
+FIDWaC is designed to take advantage of modern multi-core processors for improved performance:
+
+### Interpolation Multi-threading
+
+- **KDTree Queries**: Uses all available CPU cores for neighbor searches with `workers=-1` parameter
+- **Dask Parallel Processing**: Automatically distributes interpolation calculations across multiple cores
+- **Load Balancing**: Dask automatically balances workloads across available CPU resources
+- **Memory Management**: Chunks large arrays to process data larger than available RAM
+
+### Compression Multi-threading
+
+- **Block-Level Parallelism**: Processes multiple N×N blocks simultaneously
+- **Python Multiprocessing**: Uses the `multiprocessing` module to distribute work
+- **Configurable Thread Count**: Can specify number of processes or use all available cores
+- **Independent Block Processing**: Perfect for parallel execution as blocks can be processed independently
+
+Both modules automatically detect the number of available CPU cores and adjust their parallelism accordingly, making efficient use of your hardware without manual configuration.
+
 ---
 
 <a name="key-functions"></a>
-## 7. Key Functions
+## 8. Key Functions
 
 ### Interpolation
 
@@ -302,7 +400,7 @@ python compress_function.py path/to/your/compressed_file.7z
 ---
 
 <a name="examples"></a>
-## 8. Examples
+## 9. Examples
 
 ### Interpolation Example
 
@@ -320,9 +418,10 @@ x, y, z = data[:,0], data[:,1], data[:,2]
 # Create KDTree
 tree = spatial.cKDTree(data[:,:2], leafsize=config['leafsize'])
 
-# Query KDTree for nearest neighbors
+# Query KDTree for nearest neighbors (multi-threaded)
 distance, index = tree.query(grid_points, 
                             k=config['N'],
+                            workers=-1,  # Use all CPU cores
                             distance_upper_bound=config['max_distance'])
 
 # Perform IDW interpolation
@@ -344,23 +443,26 @@ with rasterio.open('input.tif') as src:
 # Divide into blocks
 blocks = sliding_window_view(image, (N, N))
 
-# Process each block
-for block in blocks:
-    # Apply DCT
-    dct_coeffs = dct2(block)
-    
-    # Convert to zigzag format
-    zigzag_coeffs = to_zigzag(dct_coeffs)
-    
-    # Refine coefficients to achieve desired accuracy
-    refined_coeffs, error, _ = refine_dct_array(
-        zigzag_coeffs, accuracy, N*N//2, float('inf'), N*N//4, block)
+# Set up multiprocessing pool
+num_processes = multiprocessing.cpu_count()
+pool = multiprocessing.Pool(processes=num_processes)
+
+# Process blocks in parallel
+block_data = [(i, block, nodata_value) for i, block in enumerate(blocks)]
+results = pool.map(process_block, block_data)
+pool.close()
+pool.join()
+
+# Assemble results
+compressed_blocks = {}
+for block_idx, compressed_data in results:
+    compressed_blocks[block_idx] = compressed_data
 ```
 
 ---
 
 <a name="benefits"></a>
-## 9. Advantages and Applications
+## 10. Advantages and Applications
 
 ### Advantages
 
@@ -369,6 +471,8 @@ for block in blocks:
 - **Quality Control**: Precise control over compression accuracy
 - **Format Flexibility**: Support for multiple input/output formats
 - **Compression Ratio**: Significant file size reduction while maintaining quality
+- **Multi-threaded Processing**: Efficient use of all available CPU cores
+- **Configurable Precision**: Adjustable trade-off between quality and compression ratio
 
 ### Applications
 
