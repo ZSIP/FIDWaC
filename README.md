@@ -334,13 +334,13 @@ Configuration for the compression module (`compress_function.py`):
 <a name="usage"></a>
 ### 6.4 Usage Examples
 
-#### Using interpolation_FIT.py
-
 ## Download Data
 
 Click the link below to download the data:
 
-[URL_TO_FILE](https://zutedupl-my.sharepoint.com/:f:/g/personal/alysko_zut_edu_pl/Et_gh1jMHc1FpyUV54IvqbIBSMft-kS_2VjHdPQXj-GtOg?e=8sZVvT))
+[SAMPLE_DATA](https://zutedupl-my.sharepoint.com/:f:/g/personal/alysko_zut_edu_pl/Et_gh1jMHc1FpyUV54IvqbIBSMft-kS_2VjHdPQXj-GtOg?e=8sZVvT))
+
+#### Using interpolation_FIT.py
 
 ```bash
 # Basic usage with a shapefile
