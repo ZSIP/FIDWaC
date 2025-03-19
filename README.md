@@ -524,9 +524,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 If you use this software in your research, please cite:
 
 ```
-@software{fidwac2023,
-  author = {Author Name},
+@software{fidwac2025,
+  author = {Andrzej Łysko, Wojciech Maleika, Witold Maćków, Malwina Bondarewicz, Jakub Śledziowski2, Paweł Terefenko}
   title = {FIDWaC: Fast Inverse Distance Weighting and Compression},
-  year = {2023},
+  year = {2025},
   url = {https://github.com/yourusername/FIDWaC}
 }
