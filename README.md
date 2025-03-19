@@ -52,8 +52,8 @@ The package is designed for efficient processing and storage of geospatial data 
 
 - **2D-DCT** (Discrete Cosine Transform) with zigzag coefficient encoding
 - **Quality-Controlled Compression** with iterative coefficient pruning to achieve preset error thresholds
-- **Intelligent Handling of NoData Values** (-9999) and zero values using binary representation with Base64 compression
-- **Optimized Storage** through binary serialization (pickle, `.npy`) with 7z archiving
+- **Intelligent Handling of NoData Values** (-9999) and zero values using RLE representation
+- **Optimized Storage** through serialization (RLE) with .json file and 7z archiving
 - **Parallel Block Processing**: Multi-threaded compression of image blocks
 
 ---
@@ -122,7 +122,7 @@ Script for lossy compression of raster data using DCT and zigzag encoding with q
 - Special value detection and handling (0, -9999, NaN)
 - N×N block-based processing
 - 2D-DCT transformation with coefficient optimization
-- RLE (Run-Length Encoding) for binary masks
+- RLE (Run-Length Encoding) for masks
 - Multi-threaded block processing with Python's `multiprocessing` module
 
 **Core Functions**:
@@ -142,7 +142,7 @@ def to_zigzag(matrix: np.ndarray) -> np.ndarray:
     
 def refine_dct_array(org_dct_zigzag, accuracy, agt, max_value, split_point, original_matrix):
     """Optimizes the number of DCT coefficients to achieve desired accuracy"""
-    # Uses binary search to find optimal number of coefficients
+    # Uses search to find optimal number of coefficients
     # while maintaining error below the specified threshold
 ```
 
@@ -151,12 +151,12 @@ def refine_dct_array(org_dct_zigzag, accuracy, agt, max_value, split_point, orig
 2. Special value identification and masking
 3. Division into N×N processing blocks
 4. Parallel processing of blocks using multiple CPU cores:
-   - Special value-only blocks: binary encoding
+   - Special value-only blocks: by RLE encoding
    - Mixed blocks: DCT with special value handling
    - Data-only blocks: full DCT processing
 5. Zigzag encoding of DCT coefficients
 6. Iterative coefficient pruning for quality control
-7. Binary serialization with 7z compression
+7. RLE serialization with create json file and 7z compression
 
 ---
 
@@ -189,13 +189,13 @@ graph TB
     B --> C[Divide into N×N blocks]
     C --> D[Distribute blocks to<br>multiple CPU cores]
     D --> E{Block type classification}
-    E -->|Special values only| F1[Binary + Base64 encoding]
+    E -->|Special values only| F1[RLE encoding]
     E -->|Contains data| F2[2D-DCT + zigzag encoding]
     F2 --> G[Iterative coefficient<br>pruning for accuracy]
     G --> H[Quality verification<br>error checking]
     F1 --> I[Merge processed blocks]
     H --> I
-    I --> J[Binary serialization<br>with pickle]
+    I --> J[serialization<br>with RLE]
     J --> K[Additional 7z compression]
 ```
 
@@ -429,7 +429,7 @@ Both modules automatically detect the number of available CPU cores and adjust t
 - **dct2()** / **idct2()**: 2D DCT and inverse DCT
 - **to_zigzag()** / **from_zigzag()**: Zigzag encoding/decoding
 - **refine_dct_array()**: Coefficient optimization for quality control
-- **encode_mask_rle()** / **decode_mask_rle()**: Run-length encoding for binary masks
+- **encode_mask_rle()** / **decode_mask_rle()**: Run-length encoding for RLE masks
 
 ---
 
