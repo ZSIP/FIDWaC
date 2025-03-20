@@ -310,6 +310,8 @@ if knn_calculate:
 elif idw_numpy or idw_dask:
     result=np.column_stack((data2[:,:2], idw)) # xyz to grid
     grid_result=result[:,2].reshape(spacex,spacey)
+grid_result = np.where(np.isnan(grid_result), -9999, grid_result)
+grid_result = np.where(grid_result < -9995, -9999, grid_result)
 end = time.time()
 print(f'Time elapsed: {end - start:.2f} seconds')
 
@@ -334,6 +336,7 @@ if interpolation_image_create:
                                     dtype=grid_result.dtype,
                                     crs=rasterCrs,
                                     transform=transform,
+                                    nodata=-9999,
                                     )
     interpRaster.write(grid_result,1)
     interpRaster.close()
