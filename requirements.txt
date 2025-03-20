@@ -10,6 +10,7 @@ tqdm>=4.62.0
 rasterio>=1.2.0
 pyshp>=2.1.0
 laspy>=2.0.0
+lazrs>=0.6.2
 
 # Visualization
 matplotlib>=3.5.0
