@@ -106,6 +106,8 @@ with open(r'./config.json', 'r') as file:
 # Extract configuration parameters
 results_directory = config_data.get("results_directory")
 z_field_name = config_data.get("z_field_name")
+filter_las = config_data.get("filter_las")
+filter_classes = config_data.get("filter_classes")
 base_name, file_extension = os.path.splitext(os.path.basename(file_full_path))
 
 # KDTree and IDW configuration parameters
@@ -156,6 +158,8 @@ elif file_extension in ['.las', '.laz']:
     print('Reading LAS/LAZ file...')    
     with laspy.open(file_full_path) as lasfile:
         las = lasfile.read()
+    if filter_las:
+        las= las[las.classification == filter_classes]
     x, y, z = las.x, las.y, las.z
     data = np.stack((x, y, z), axis=-1)
     # Remove no data values (-9999) and NaN
@@ -189,6 +193,7 @@ print(f'Source min y: {np.min(y):.2f}')
 print(f'Source max y: {np.max(y):.2f}')
 print(f'Source min z: {np.min(z):.2f}')
 print(f'Source max z: {np.max(z):.2f}')
+print(f'Source points: {len(x):.0f}') 
 
 end = time.time()
 print(f'Time elapsed: {end - start:.2f} seconds')
