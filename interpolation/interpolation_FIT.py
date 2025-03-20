@@ -153,8 +153,7 @@ if file_extension == '.shp':
     file_full_path_gdal_saga = file_full_path
 
 elif file_extension in ['.las', '.laz']:
-    print('Reading LAS/LAZ file...')
-    idw_dask = True  # Force Dask for large point clouds
+    print('Reading LAS/LAZ file...')    
     with laspy.open(file_full_path) as lasfile:
         las = lasfile.read()
     x, y, z = las.x, las.y, las.z
