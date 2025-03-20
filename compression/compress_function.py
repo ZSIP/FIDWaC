@@ -764,6 +764,7 @@ def compress_image(file_path, num_processes=None):
 
         # Load data
         image_array = image.read()
+        image_array = np.where(np.isnan(image_array), -9999, image_array) #-9999 when NaN in source
 
     # Display value range
     z_min, z_max = np.min(image_array), np.max(image_array)
