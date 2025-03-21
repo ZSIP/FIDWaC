@@ -8,6 +8,7 @@ import json
 import numpy as np
 from scipy import spatial
 import rasterio
+from rasterio.enums import Compression
 import pandas as pd
 import numexpr as ne
 import dask.array as da
@@ -108,6 +109,7 @@ results_directory = config_data.get("results_directory")
 z_field_name = config_data.get("z_field_name")
 filter_las = config_data.get("filter_las")
 filter_classes = config_data.get("filter_classes")
+smooth_result = config_data.get("smooth_result")
 base_name, file_extension = os.path.splitext(os.path.basename(file_full_path))
 
 # KDTree and IDW configuration parameters
@@ -310,6 +312,8 @@ if knn_calculate:
 elif idw_numpy or idw_dask:
     result=np.column_stack((data2[:,:2], idw)) # xyz to grid
     grid_result=result[:,2].reshape(spacex,spacey)
+if smooth_result: # smooth by Gauss
+    grid_result = scipy.ndimage.gaussian_filter(grid_result, sigma=1)
 grid_result = np.where(np.isnan(grid_result) | (grid_result < -9995), -9999, grid_result)
 end = time.time()
 print(f'Time elapsed: {end - start:.2f} seconds')
@@ -332,10 +336,15 @@ if interpolation_image_create:
                                     height=grid_result.shape[0],
                                     width=grid_result.shape[1],
                                     count=1,
-                                    dtype=grid_result.dtype,
                                     crs=rasterCrs,
                                     transform=transform,
                                     nodata=-9999,
+                                    dtype=rasterio.float32,
+                                    compress=Compression.deflate,
+                                    predictor=2,
+                                    tiled=True,
+                                    blockxsize=256,
+                                    blockysize=256                                 
                                     )
     interpRaster.write(grid_result,1)
     interpRaster.close()
