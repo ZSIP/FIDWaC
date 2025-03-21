@@ -18,6 +18,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 from scipy.interpolate import griddata
 from scipy.fftpack import dct, idct
 import rasterio
+from rasterio.enums import Compression
 from typing import List, Tuple, Dict, Any, Optional, Union
 
 # Load configuration
@@ -1086,12 +1087,17 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
         height=final_matrix.shape[0],
         width=final_matrix.shape[1],
         count=1,
-        dtype=final_matrix.dtype,
+        dtype=rasterio.float32,
         crs=rasterCrs,
         transform=rasterio.transform.Affine(
             transform_a, transform_b, transform_c, transform_d, transform_e, transform_f
         ),
         nodata=-9999,
+        compress=Compression.deflate,
+        predictor=2,
+        tiled=True,
+        blockxsize=256,
+        blockysize=256
     ) as interpRaster:  # Setting NoData value for output file
         interpRaster.write(final_matrix, 1)
 
