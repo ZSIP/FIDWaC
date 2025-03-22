@@ -768,7 +768,7 @@ def compress_image(file_path, num_processes=None):
         image_array = np.where(np.isnan(image_array), -9999, image_array) #-9999 when NaN in source
 
     # Display value range
-    z_min, z_max = np.min(image_array), np.max(image_array)
+    z_min, z_max = np.min(image_array[image_array > -9999]), np.max(image_array)
 
     print(f"Source min x: {x_min}")
     print(f"Source max x: {x_max}")
@@ -844,6 +844,7 @@ def compress_image(file_path, num_processes=None):
         transform.d,  # 0
         transform.e,  # terrain resolution of pixel in y axis
         transform.f,  # y coordinate
+        rasterCrs.to_string() # CRS info
     ]
 
     # Add compressed data
@@ -970,7 +971,7 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
     transform_d = float(dcv_compress[11])
     transform_e = float(dcv_compress[12])
     transform_f = float(dcv_compress[13])
-
+    rasterCrs = dcv_compress[14] # read
     # Scaling factor for restoring floating-point numbers
     print(
         f"Decompression parameters: N={N}, accuracy={accuracy}, size={img_x}x{img_y}, scaling factor={scaling_factor}"
@@ -982,9 +983,9 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
 
     print("Reconstructing original matrix")
     pbar = tqdm(
-        total=len(dcv_compress) - 14
+        total=len(dcv_compress) - 15
     )  # Counting from the first 14 elements with parameters
-    i = 14
+    i = 15
 
     while i < len(dcv_compress):
         array = np.zeros(N * N, dtype=np.float32)  # Empty matrix
@@ -1218,26 +1219,26 @@ def main(file_path=None, output_dir=None):
         file_parts = outfilename.split("_")
 
         # Extract CRS information
-        crs_info = None
-        for part in file_parts:
-            if part.startswith("CRS"):
-                crs_info = part[3:]  # Remove 'CRS' from the beginning
-                break
+        # crs_info = None
+        # for part in file_parts:
+        #     if part.startswith("CRS"):
+        #         crs_info = part[3:]  # Remove 'CRS' from the beginning
+        #         break
 
-        if crs_info and crs_info.startswith("epsg"):
-            try:
-                # Attempt to get EPSG code
-                epsg_code = int(
-                    crs_info[4:]
-                )  # Remove 'epsg' from the beginning and convert to int
-                rasterCrs = rasterio.crs.CRS.from_epsg(epsg_code)
-                print(f"Read CRS from file name: EPSG:{epsg_code}")
-            except ValueError:
-                print(f'Error: Cannot read EPSG code from "{crs_info}"')
-                return
-        else:
-            print("Warning: No CRS information found in file name")
-            rasterCrs = None
+        # if crs_info and crs_info.startswith("epsg"):
+        #     try:
+        #         # Attempt to get EPSG code
+        #         epsg_code = int(
+        #             crs_info[4:]
+        #         )  # Remove 'epsg' from the beginning and convert to int
+        #         rasterCrs = rasterio.crs.CRS.from_epsg(epsg_code)
+        #         print(f"Read CRS from file name: EPSG:{epsg_code}")
+        #     except ValueError:
+        #         print(f'Error: Cannot read EPSG code from "{crs_info}"')
+        #         return
+        # else:
+        #     print("Warning: No CRS information found in file name")
+        #     rasterCrs = None
 
         # Extract block size N and accuracy Acc information
         N_value = None
@@ -1278,6 +1279,7 @@ def main(file_path=None, output_dir=None):
             padded_x = dcv_compress[4]  # Expanded size X
             padded_y = dcv_compress[5]  # Expanded size Y
             padded_shape = (padded_x, padded_y)
+            rasterCrs = dcv_compress[14]
 
             print(f"Image size: {img_x}x{img_y}")
             print(f"Expanded size: {padded_x}x{padded_y}")
@@ -1347,4 +1349,4 @@ def main(file_path=None, output_dir=None):
             file_path
         )
 
-        print("Compression and decompression process completed")
+        print("Pocess completed")
