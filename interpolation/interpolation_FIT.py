@@ -6,10 +6,12 @@ import json
 
 # Third-party library imports
 import numpy as np
+import scipy
 from scipy import spatial
 import rasterio
 from rasterio.enums import Compression
 import pandas as pd
+import geopandas as gpd
 import numexpr as ne
 import dask.array as da
 import shapefile
@@ -96,9 +98,9 @@ def calculate_idw_dask(distance: np.ndarray, weights: float, value_data: np.ndar
     return idw.compute()
 
 # Parse command line arguments
-arguments = sys.argv
-print(f"Script path: {arguments[0]}")
-file_full_path = sys.argv[1]
+#file_full_path = sys.argv[1]
+file_full_path='./source/4678_84813_N-34-37-D-a-1-1-3.laz'
+print(f"Script path: {file_full_path}")
 
 # Load configuration
 with open(r'./config.json', 'r') as file:
@@ -110,7 +112,13 @@ z_field_name = config_data.get("z_field_name")
 filter_las = config_data.get("filter_las")
 filter_classes = config_data.get("filter_classes")
 smooth_result = config_data.get("smooth_result")
+smooth_level = config_data.get("smooth_level")
+geoid_correction = config_data.get("geoid_correction")
+geoid_correction_file = config_data.get("geoid_correction_file")
+geoidCrs = config_data.get("geoidCrs")
+sourceCrs = config_data.get("sourceCrs")
 base_name, file_extension = os.path.splitext(os.path.basename(file_full_path))
+
 
 # KDTree and IDW configuration parameters
 N = config_data.get("N")  # Number of neighbors
@@ -118,7 +126,6 @@ resolution = config_data.get("resolution")  # Grid resolution
 max_distance = config_data.get("max_distance")  # Maximum search distance
 leafsize = config_data.get("leafsize")  # Leaf size for KDTree
 weights = config_data.get("weights")  # Weights for IDW
-rasterCrs = config_data.get("rasterCrs")  # Coordinate reference system
 
 # Construct output filename
 file_parameter = base_name + '-N-' + str(N) + '-R-' + str(resolution) + '-dist-' + str(max_distance)
@@ -152,9 +159,9 @@ if file_extension == '.shp':
     records = [list(record.record) for record in sf.iterShapeRecords()]
     data = pd.DataFrame(records, columns=fields).to_numpy()
     # Remove no data values (-9999) and NaN
-    data = data[~np.any(np.isnan(data) | (data == -9999), axis=1)]
-    x, y, z = data[:,0], data[:,1], data[:,2]
-    file_full_path_gdal_saga = file_full_path
+    data = data[~np.any(np.isnan(data) | (data == -9999), axis=1)]    
+    del sf, fields, records # Free up memory
+    
 
 elif file_extension in ['.las', '.laz']:
     print('Reading LAS/LAZ file...')    
@@ -166,13 +173,14 @@ elif file_extension in ['.las', '.laz']:
     data = np.stack((x, y, z), axis=-1)
     # Remove no data values (-9999) and NaN
     data = data[~np.any(np.isnan(data) | (data == -9999), axis=1)]
+    del las, x, y, z# Free up memory
         
 elif file_extension in ['.txt', '.csv']:  
     print('Reading CSV/TXT file...')
     data = np.loadtxt(file_full_path, delimiter=',', skiprows=1)
     # Remove no data values (-9999) and NaN
     data = data[~np.any(np.isnan(data) | (data == -9999), axis=1)]
-    x, y, z = data[:,0], data[:,1], data[:,2]
+    #x, y, z = data[:,0], data[:,1], data[:,2]
 
 # Optionally save point data to shapefile
 if save_data_to_shp:
@@ -185,26 +193,62 @@ if save_data_to_shp:
         w.point(xt, yt)
         w.record(xt, yt, zt)
     w.close()
-    file_full_path_gdal_saga = f'{file_full_path}.shp'
+    del w # Free up memory
+
+
+
+if geoid_correction:
+    print('Applying geoid correction...')
+    # prepare geoid correction    
+    max_distance_geoid = 2000
+    df = pd.read_csv(geoid_correction_file, sep=' ', names=['x', 'y', 'z'],  header=None)
+    gdf = gpd.GeoDataFrame(df,geometry=gpd.points_from_xy(df["x"], df["y"])).set_crs(geoidCrs)
+    try:
+        gdf=gdf.to_crs(sourceCrs)
+    except:
+        print(f'geoidCrs:{geoidCrs} and sourceCrs:{sourceCrs} are not compatible or this same')
+    #x_geoid, y_geoid, z_geoid = df['x'], df['y'], df['z']
+    # prepare data for geoid correction    
+    gdf_data = gpd.GeoDataFrame({'x': data[:,0], 'y': data[:,1], 'z': data[:,2]}, geometry=gpd.points_from_xy(data[:,0], data[:,1])).set_crs(sourceCrs)
+    # Create KD-Tree for geoid correction
+    tree_geoid = spatial.cKDTree(np.column_stack((gdf.geometry.x, gdf.geometry.y)), leafsize=leafsize)  
+    distance_geoid, index_geoid = tree_geoid.query(
+    np.column_stack((data[:,0], data[:,1])),
+    k=1,
+    distance_upper_bound=max_distance_geoid
+    )    
+    valid_mask = np.isfinite(distance_geoid)
+    z_geoid_nearest = np.full(data.shape[0], np.nan)
+    z_geoid_vals = gdf['z'].to_numpy()
+    z_geoid_nearest[valid_mask] = z_geoid_vals[index_geoid[valid_mask]]
+    # uppdate data z
+    data[valid_mask, 2] = data[valid_mask, 2] - z_geoid_nearest[valid_mask]
+    print("Geoid correction applied to", valid_mask.sum(), "points.")
+    del gdf, gdf_data, tree_geoid, distance_geoid, index_geoid, valid_mask, z_geoid_nearest, z_geoid_vals # Free up memory
+
 
 # Print data statistics
-print('\nData Statistics:')
-print(f'Source min x: {np.min(x):.2f}')
-print(f'Source max x: {np.max(x):.2f}')
-print(f'Source min y: {np.min(y):.2f}')
-print(f'Source max y: {np.max(y):.2f}')
-print(f'Source min z: {np.min(z):.2f}')
-print(f'Source max z: {np.max(z):.2f}')
-print(f'Source points: {len(x):.0f}') 
+try:    
+    print('\nData Statistics:')
+    print(f'Source min x: {np.min(data[:,0]):.2f}')
+    print(f'Source max x: {np.max(data[:,0]):.2f}')
+    print(f'Source min y: {np.min(data[:,1]):.2f}')
+    print(f'Source max y: {np.max(data[:,1]):.2f}')
+    print(f'Source min z: {np.min(data[:,2]):.2f}')
+    print(f'Source max z: {np.max(data[:,2]):.2f}')
+    print(f'Source points: {len(data[:,1]):.0f}') 
+except:
+    print('0 points readed. Mayby LAS filter not find poinsts or file damaged!!!')
+    sys.exit(1)
 
 end = time.time()
 print(f'Time elapsed: {end - start:.2f} seconds')
 
 # Prepare grid extent
-xmin = near_divided(np.min(x), resolution).astype(int)
-xmax = near_divided(np.max(x), resolution).astype(int)
-ymin = near_divided(np.min(y), resolution).astype(int)
-ymax = near_divided(np.max(y), resolution).astype(int)
+xmin = near_divided(np.min(data[:,0]), resolution).astype(int)
+xmax = near_divided(np.max(data[:,0]), resolution).astype(int)
+ymin = near_divided(np.min(data[:,1]), resolution).astype(int)
+ymax = near_divided(np.max(data[:,1]), resolution).astype(int)
 
 print('\nGrid Extent:')
 print(f'min x: {xmin}')
@@ -262,7 +306,7 @@ print(f'Time elapsed: {end - start:.2f} seconds')
 
 print('Preparing interpolation values...')
 # Get z values for each neighbor point
-value_data = np.take(z, index.ravel())
+value_data = np.take(data[:,2], index.ravel())
 value_data = value_data.reshape(np.shape(index)[0], np.shape(index)[1])
 
 # Convert arrays to float for NaN handling
@@ -313,7 +357,7 @@ elif idw_numpy or idw_dask:
     result=np.column_stack((data2[:,:2], idw)) # xyz to grid
     grid_result=result[:,2].reshape(spacex,spacey)
 if smooth_result: # smooth by Gauss
-    grid_result = scipy.ndimage.gaussian_filter(grid_result, sigma=1)
+    grid_result = scipy.ndimage.gaussian_filter(grid_result, sigma=smooth_level)
 grid_result = np.where(np.isnan(grid_result) | (grid_result < -9995), -9999, grid_result)
 end = time.time()
 print(f'Time elapsed: {end - start:.2f} seconds')
@@ -336,7 +380,7 @@ if interpolation_image_create:
                                     height=grid_result.shape[0],
                                     width=grid_result.shape[1],
                                     count=1,
-                                    crs=rasterCrs,
+                                    crs=sourceCrs,
                                     transform=transform,
                                     nodata=-9999,
                                     dtype=rasterio.float32,
