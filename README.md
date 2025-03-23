@@ -423,7 +423,23 @@ find ./source -name '*.7z' | parallel --ungroup -j 1 python3 -u compress.py {}
 
 Reference: Tange, O. (2022, November 22). GNU Parallel 20221122 ('Херсо́н'). Zenodo. https://doi.org/10.5281/zenodo.7347980
 
----
+**explanation of the file name of the interpolation result:**
+file: 4678_84839_N-34-37-D-a-2-4-1-N10-R0.5-dist5_geotif.tif
+  - 4678_84839_N-34-37-D-a-2-4-1 - input file name
+  - N10 - assumed number of nearest neighbors for KNN analysis
+  - R0.5 - optical resolution of the pixel [meter]
+  - dist5 - distance of searching nearest points [meter]
+
+**explanation of the file name of the compression result:**
+file: 2_xyz_geotif_N8_Acc0.1_tdct2_dec3_CRSepsg32633_validTrue.7z
+  - 2_xyz_geotif - input file name
+  - N8 - compression block 8x8 [px]
+  - Acc0.1 - compression accuracy [meter]
+  - tdct2 - type of DCT [intiger num.] - see https://docs.scipy.org/doc/scipy/reference/generated/scipy.fftpack.dct.html
+  - dec3 - number after decimal point [intiger num.]
+  - CRSepsg32633 - coordinate system
+  - validTrue - compression performed with assumed error is correct
+
 
 <a name="multi-threading"></a>
 ## 7. Multi-threading Capabilities
