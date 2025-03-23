@@ -118,7 +118,6 @@ geoidCrs = config_data.get("geoidCrs")
 sourceCrs = config_data.get("sourceCrs")
 base_name, file_extension = os.path.splitext(os.path.basename(file_full_path))
 
-
 # KDTree and IDW configuration parameters
 N = config_data.get("N")  # Number of neighbors
 resolution = config_data.get("resolution")  # Grid resolution
@@ -194,9 +193,35 @@ if save_data_to_shp:
     w.close()
     del w # Free up memory
 
+"""
+Apply geoid correction to elevation data.
 
+This functionality adjusts elevation values from ellipsoidal heights (typically measured by GPS)
+to orthometric heights (heights above mean sea level) by subtracting the geoid undulation.
+Geoid undulation is the height difference between the reference ellipsoid and geoid at any given point.
 
-if geoid_correction:
+The process includes:
+1. Loading geoid model data from a specified file
+2. Transforming coordinates between source CRS and geoid CRS if needed
+3. Creating a KDTree for efficient spatial querying of the geoid model
+4. Finding the nearest geoid height value for each input point
+5. Adjusting elevation values by subtracting the geoid undulation
+
+Parameters used from configuration:
+- geoid_correction_file: Path to file containing geoid model data
+- geoidCrs: Coordinate reference system of the geoid model
+- sourceCrs: Coordinate reference system of the input data
+
+The correction is critical for:
+- Converting GPS-derived heights to heights usable in engineering applications
+- Ensuring accurate representation of terrain relative to sea level
+- Properly integrating datasets with different vertical reference systems
+
+Note:
+The correction only applies to points within the specified distance (max_distance_geoid)
+of a geoid model point. Points outside this range remain unchanged.
+"""
+if geoid_correction:    
     print('Applying geoid correction...')
     # prepare geoid correction    
     max_distance_geoid = 2000
@@ -224,7 +249,6 @@ if geoid_correction:
     data[valid_mask, 2] = data[valid_mask, 2] - z_geoid_nearest[valid_mask]
     print("Geoid correction applied to", valid_mask.sum(), "points.")
     del gdf, gdf_data, tree_geoid, distance_geoid, index_geoid, valid_mask, z_geoid_nearest, z_geoid_vals # Free up memory
-
 
 # Print data statistics
 try:    
