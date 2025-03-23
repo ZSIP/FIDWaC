@@ -98,8 +98,7 @@ def calculate_idw_dask(distance: np.ndarray, weights: float, value_data: np.ndar
     return idw.compute()
 
 # Parse command line arguments
-#file_full_path = sys.argv[1]
-file_full_path='./source/4678_84813_N-34-37-D-a-1-1-3.laz'
+file_full_path = sys.argv[1]
 print(f"Script path: {file_full_path}")
 
 # Load configuration
