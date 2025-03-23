@@ -176,7 +176,10 @@ def refine_dct_array(org_dct_zigzag, accuracy, agt, max_value, split_point, orig
 ```mermaid
 graph TB
     A[Load input data] --> B[Remove invalid data]
-    B --> C[Prepare the interpolation grid]
+    B --> B1{Geoid correction<br>enabled?}
+    B1 -->|Yes| B2[Apply geoid correction]
+    B1 -->|No| C
+    B2 --> C[Prepare the interpolation grid]
     C --> D[Construct KDTree]
     D --> E[Search for N nearest neighbors]
     E --> F{Select IDW method}
