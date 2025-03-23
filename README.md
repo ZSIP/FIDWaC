@@ -224,9 +224,13 @@ graph TB
   - Dask: Parallel computing
   - rasterio: GeoTIFF handling
 - **File Format Support**:
-  - Pandas: Tabular data
-  - Shapefile: Vector data
-  - laspy: LiDAR point clouds
+     **Interpolation**
+        - Txt,Csv: Point data delimiter=' '
+        - Shapefile: Vector data
+        - laspy: LiDAR point clouds
+     **Compression**
+     - GeoTif: rasster
+     - Asc GRID: grid
 - **Additional Tools**:
   - py7zr: 7z compression
   - tqdm: Progress visualization
@@ -344,7 +348,8 @@ FIDWaC uses JSON configuration files to manage processing parameters, allowing e
     "accuracy": 0.05,
     "matrix": 16,
     "decimal": 2,
-    "type_dct": 2
+    "type_dct": 2,
+    "sourceCrs_force_declare": "epsg:2180"
 }
 ```
 
@@ -355,6 +360,7 @@ FIDWaC uses JSON configuration files to manage processing parameters, allowing e
 - **matrix**: Size of processing blocks (N×N, e.g., 8×8, 16×16)
 - **decimal**: Decimal precision for scaling factor
 - **type_dct**: DCT type (2 is the common choice for image compression)
+- **sourceCrs_force_declare**: force declared epsgCrs
 
 ---
 
