@@ -234,7 +234,7 @@ graph TB
 ### Hardware Recommendations
 
 - **CPU**: Multi-core processor (recommended for Dask mode and parallel compression)
-- **RAM**: 8GB minimum, 16GB+ recommended for larger datasets
+- **RAM**: 16GB minimum, 64GB+ recommended for larger datasets
 - **Storage**: Sufficient space for input/output data
 - **Platform**: Compatible with Windows and Linux
 
