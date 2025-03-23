@@ -562,5 +562,5 @@ If you use this software in your research, please cite:
   author = {Andrzej Łysko, Wojciech Maleika, Witold Maćków, Malwina Bondarewicz, Jakub Śledziowski2, Paweł Terefenko}
   title = {FIDWaC: Fast Inverse Distance Weighting and Compression},
   year = {2025},
-  url = {https://github.com/yourusername/FIDWaC}
+  url = {https://github.com/ZSIP/FIDWaC}
 }
