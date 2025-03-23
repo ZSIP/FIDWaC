@@ -399,20 +399,20 @@ FIDWaC supports batch processing of multiple files using tools like `find` and `
 
 ```bash
 # Process all shapefiles in a directory
-find ./data -name "*.shp" | parallel -j 4 python interpolation_FIT.py {}
+find ./source -name '*.shp' | parallel --ungroup -j 1 python3 -u interpolation_FIT.py {}
 
 # Process all LAS files with a specific naming pattern
-find ./lidar -name "*_2023*.las" | parallel python interpolation_FIT.py {}
+find ./source -name '*.laz' | parallel --ungroup -j 1 python3 -u interpolation_FIT.py {}
 ```
 
 #### Batch Compression
 
 ```bash
 # Compress all GeoTIFF files in the results directory
-find ./results -name "*.tif" | parallel -j 8 python compress_function.py {}
+find ./source -name '*.tif' | parallel --ungroup -j 1 python3 -u compress.py {}
 
 # Decompress all compressed files
-find ./compressed -name "*.7z" | parallel python compress_function.py {}
+find ./source -name '*.7z' | parallel --ungroup -j 1 python3 -u compress.py {}
 ```
 
 Reference: Tange, O. (2022, November 22). GNU Parallel 20221122 ('Херсо́н'). Zenodo. https://doi.org/10.5281/zenodo.7347980
