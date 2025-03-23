@@ -41,12 +41,13 @@ The package is designed for efficient processing and storage of geospatial data 
   - Dask for parallel processing of large datasets
 - **Efficient Spatial Search** with `scipy.spatial.cKDTree`
 - **Flexible Parameter Selection**:
-  - Maximum search radius (`RMAX`)
-  - Maximum number of neighbors (`NMAX`)
-  - Minimum number of observations (`NMIN`)
+  - Maximum search radius (`max_distance`)
+  - Maximum number of neighbors (`N`)
+  - Grid resolution (`resolution`)
 - **Multiple Input Formats**: `.shp`, `.las`, `.laz`, `.txt`, `.csv`
 - **Multiple Output Formats**: GeoTIFF, CSV, Surfer GRD
 - **Multi-threaded Processing**: Utilizes all available CPU cores for spatial queries
+- **Geoid Correction**: Option to apply geoid correction with configurable CRS
 
 ### Advanced Raster Compression
 
@@ -55,6 +56,7 @@ The package is designed for efficient processing and storage of geospatial data 
 - **Intelligent Handling of NoData Values** (-9999) and zero values using RLE representation
 - **Optimized Storage** through serialization (RLE) with .json file and 7z archiving
 - **Parallel Block Processing**: Multi-threaded compression of image blocks
+- **Configurable Accuracy**: Set compression accuracy via configuration
 
 ---
 
@@ -67,8 +69,10 @@ The package is designed for efficient processing and storage of geospatial data 
 Script for advanced spatial data interpolation using IDW method and KDTree optimization.
 
 **Key Components**:
-- Configuration management through `config.json`
+- Configuration management through `interpolation/config.json`
 - Data preprocessing (NaN and -9999 removal)
+- Optional filtering of LAS/LAZ data based on classification codes
+- Optional geoid correction with configurable coordinate reference systems
 - Meshgrid generation based on data boundaries
 - KDTree implementation for efficient neighbor search
 - Dual interpolation engines (NumPy/numexpr and Dask)
@@ -105,12 +109,15 @@ def calculate_idw_dask(distance: np.ndarray, weights: float, value_data: np.ndar
 
 **Processing Workflow**:
 1. Data loading and cleaning
-2. Grid preparation based on data extents
-3. KDTree construction for spatial indexing
-4. Nearest neighbors search for each grid point (multi-threaded)
-5. Distance-based weight calculation
-6. IDW interpolation via optimized numerical processing (parallel with Dask)
-7. Output generation in selected formats
+2. Optional filtering of point cloud data by classification code (for LAS/LAZ)
+3. Optional geoid correction based on configuration
+4. Grid preparation based on data extents
+5. KDTree construction for spatial indexing
+6. Nearest neighbors search for each grid point (multi-threaded)
+7. Distance-based weight calculation
+8. IDW interpolation via optimized numerical processing (parallel with Dask)
+9. Optional smoothing of results
+10. Output generation in selected formats
 
 <a name="compression"></a>
 ### 2.2 `compress_function.py`
@@ -118,12 +125,13 @@ def calculate_idw_dask(distance: np.ndarray, weights: float, value_data: np.ndar
 Script for lossy compression of raster data using DCT and zigzag encoding with quality control.
 
 **Key Components**:
-- Configuration management through `config.json`
+- Configuration management through `compression/config.json`
 - Special value detection and handling (0, -9999, NaN)
-- N×N block-based processing
+- N×N block-based processing with configurable matrix size
 - 2D-DCT transformation with coefficient optimization
 - RLE (Run-Length Encoding) for masks
 - Multi-threaded block processing with Python's `multiprocessing` module
+- Configurable decimal precision for compression
 
 **Core Functions**:
 ```python
@@ -149,14 +157,14 @@ def refine_dct_array(org_dct_zigzag, accuracy, agt, max_value, split_point, orig
 **Processing Workflow**:
 1. Raster data loading
 2. Special value identification and masking
-3. Division into N×N processing blocks
+3. Division into N×N processing blocks (configurable via config.json)
 4. Parallel processing of blocks using multiple CPU cores:
    - Special value-only blocks: by RLE encoding
    - Mixed blocks: DCT with special value handling
    - Data-only blocks: full DCT processing
 5. Zigzag encoding of DCT coefficients
-6. Iterative coefficient pruning for quality control
-7. RLE serialization with create json file and 7z compression
+6. Iterative coefficient pruning for quality control based on accuracy setting
+7. RLE serialization with JSON file creation and 7z compression
 
 ---
 
@@ -253,83 +261,99 @@ pip install -r requirements.txt
 <a name="json-config"></a>
 ### 6.1 JSON Configuration System
 
-FIDWaC uses JSON format for configuration because:
+FIDWaC uses JSON configuration files to manage processing parameters, allowing easy adjustment without code modification.
 
-- **Readability**: Simple human-readable format that's easy to edit
-- **Structured**: Hierarchical structure for organizing related parameters
-- **Language-Independent**: Can be processed by various programming languages
-- **Validation**: Easy to validate against schemas
-- **No Code Changes**: Allows changing parameters without modifying code
-- **Portability**: Easily shareable between different environments
-- **Versatility**: Supports various data types (numbers, strings, booleans, arrays)
+**Location of configuration files**:
+- Interpolation: `/interpolation/config.json`
+- Compression: `/compression/config.json`
+
+**Advantages of JSON configuration**:
+- Human-readable format
+- Easy to modify without coding knowledge
+- Centralized control of critical parameters
+- Simplifies automation and batch processing
 
 <a name="interp-config"></a>
 ### 6.2 Interpolation Configuration
 
-Configuration for the interpolation module (`interpolation_FIT.py`):
-
+**Example configuration file** (`/interpolation/config.json`):
 ```json
 {
-  "results_directory": "./results/",
-  "z_field_name": "z",
-  "N": 12,
-  "resolution": 0.5,
-  "max_distance": 50,
-  "leafsize": 16,
-  "weights": 1,
-  "rasterCrs": "EPSG:2180",
-  "save_data_to_shp": false,
-  "idw_dask": true,
-  "idw_numpy": false,
-  "knn_calculate": false,
-  "knn_image": false,
-  "interpolation_image_create": true,
-  "csv_result": true,
-  "surfer_grd": false
+    "results_directory": "./results/",
+    "z_field_name": "z",
+    "filter_las": true,
+    "filter_classes": [2],
+    "smooth_result": true,
+    "smooth_level": 1,    
+    "geoid_correction": true,
+    "geoid_correction_file": "./geoid/PL_geod.csv",
+    "sourceCrs": "epsg:2180",
+    "geoidCrs": "epsg:4326",
+    "N": 10,
+    "resolution": 0.5,
+    "max_distance": 100,
+    "leafsize": 10,
+    "weights": 2,    
+    "save_data_to_shp": false,
+    "idw_dask": true,
+    "idw_numpy": false,
+    "knn_calculate": false,
+    "knn_image": false,
+    "interpolation_image_create": true,
+    "csv_result": false,
+    "surfer_grd": false
 }
 ```
-    results_directory: Directory where the processing results will be saved.
-    z_field_name: Name of the field representing Z values (elevations) in the input data.
-    N: Number of neighbors used in the IDW (Inverse Distance Weighting) method.
-    resolution: Resolution of the interpolation grid.
-    max_distance: Maximum search distance for neighbors.
-    leafsize: Leaf size for the KDTree structure.
-    weights: Weights used in IDW calculations.
-    rasterCrs: Coordinate reference system for the output raster.
-    save_data_to_shp: Flag indicating whether to save data to a Shapefile.
-    idw_dask: Flag indicating whether to use Dask for IDW calculations.
-    idw_numpy: Flag indicating whether to use NumPy for IDW calculations.
-    knn_calculate: Flag indicating whether to calculate KNN (K-nearest neighbors).
-    knn_image: Flag indicating whether to create a KNN image.
-    interpolation_image_create: Flag indicating whether to create an interpolation image.
-    csv_result: Flag indicating whether to save results to a CSV file.
-    surfer_grd: Flag indicating whether to save results in Surfer grid format.
 
+**Key parameters**:
+- **results_directory**: Directory where interpolation results will be saved
+- **z_field_name**: Name of the field containing Z values in the input data
+- **filter_las**: Whether to filter LAS/LAZ files based on classification
+- **filter_classes**: List of class codes to include (e.g., 2 for ground points)
+- **smooth_result**: Whether to apply smoothing to the interpolation result
+- **smooth_level**: Level of smoothing to apply (higher values = more smoothing)
+- **geoid_correction**: Whether to apply geoid correction to elevations
+- **geoid_correction_file**: Path to geoid correction data file
+- **sourceCrs**: Coordinate reference system of source data (EPSG code)
+- **geoidCrs**: Coordinate reference system for geoid data (EPSG code)
+- **N**: Number of nearest neighbors for interpolation
+- **resolution**: Grid cell size for the interpolation output
+- **max_distance**: Maximum search distance for neighbors
+- **leafsize**: Leaf size for KDTree (affects build speed and memory usage)
+- **weights**: Power parameter for IDW (higher values = more local influence)
+- **save_data_to_shp**: Option to save input points as a shapefile
+- **idw_dask**: Use Dask for parallel IDW processing
+- **idw_numpy**: Use NumPy+numexpr for IDW processing
+- **knn_calculate**: Calculate K-nearest neighbors
+- **knn_image**: Create a KNN map image
+- **interpolation_image_create**: Create the interpolated surface image
+- **csv_result**: Save results as CSV
+- **surfer_grd**: Save results in Surfer grid format
 
 <a name="comp-config"></a>
 ### 6.3 Compression Configuration
 
-Configuration for the compression module (`compress_function.py`):
-
+**Example configuration file** (`/compression/config.json`):
 ```json
 {
-  "results_directory": "./results_compression/",
-  "source_directory": "./source/",
-  "accuracy": 0.01,
-  "matrix": 8,
-  "decimal": 2,
-  "type_dct": 2
+    "results_directory": "./results/",
+    "source_directory": "./source/",
+    "accuracy": 0.05,
+    "matrix": 16,
+    "decimal": 2,
+    "type_dct": 2
 }
 ```
 
-    results_directory: Directory where the processing results will be saved.
-    source_directory: Directory where the source data is located.
-    accuracy: Accuracy of the compression algorithm. Setting accuracy to 0 allows for saving data with the maximum possible accuracy relative to the original, but does not guarantee lossless compression.
-    matrix: Matrix size used in the compression process.
-    decimal: Number of decimal places to use in the output.
-    type_dct: Type of Discrete Cosine Transform (DCT) to use.
+**Key parameters**:
+- **results_directory**: Directory where compressed files will be saved
+- **source_directory**: Directory containing source files for compression
+- **accuracy**: Maximum acceptable error during compression (lower values = higher quality)
+- **matrix**: Size of processing blocks (N×N, e.g., 8×8, 16×16)
+- **decimal**: Decimal precision for scaling factor
+- **type_dct**: DCT type (2 is the common choice for image compression)
 
-
+---
 
 <a name="usage"></a>
 ### 6.4 Usage Examples
