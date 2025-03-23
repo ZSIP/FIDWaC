@@ -4,5 +4,6 @@
     "accuracy": 0.05,
     "matrix": 16,
     "decimal": 2,
-    "type_dct": 2
+    "type_dct": 2,
+    "sourceCrs_force_declare": "epsg:2180"
 }
