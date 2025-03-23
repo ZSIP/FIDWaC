@@ -30,6 +30,7 @@ result_dir = config_data.get("results_directory")
 source_dir = config_data.get("source_directory")
 accuracy = config_data.get("accuracy")
 N = config_data.get("matrix")
+sourceCrs_force_declare = config_data.get("sourceCrs_force_declare")
 global decimal
 decimal = config_data.get("decimal")
 type_dct = config_data.get("type_dct")
@@ -828,6 +829,7 @@ def compress_image(file_path, num_processes=None):
             results_buffer[idx] = compressed_data
 
     # Prepare data for saving
+    crs_str = rasterCrs.to_string() if rasterCrs else sourceCrs_force_declare
     dcv_compress = [
         N,  # Block size
         accuracy,  # Compression accuracy
