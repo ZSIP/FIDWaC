@@ -1,9 +1,9 @@
 {
     "results_directory": "./results/",
     "source_directory": "./source/",
-    "accuracy": 0.05,
-    "matrix": 16,
-    "decimal": 2,
+    "accuracy": 0.1,
+    "matrix": 8,
+    "decimal": 3,
     "type_dct": 2,
     "sourceCrs_force_declare": "epsg:2180"
 }

@@ -630,7 +630,7 @@ def interpolate_zeros(
 # Function to process a single block - will be used in multi-threaded processing
 def process_block(
     block_data: Tuple[int, np.ndarray, Optional[float]],
-) -> Tuple[int, List]:
+) -> Tuple[int, List, float]:
     """
     Processes a single image block.
 
@@ -642,17 +642,18 @@ def process_block(
     Returns:
     -------
     tuple
-        (block_index, compressed_data)
+        (block_index, compressed_data, max_error)
     """
     idx, original_matrix, nodata_value = block_data
+    max_error = 0.0  # Initialize max error for this block
 
     # Fast path for zero blocks
     if np.all(original_matrix == 0):
-        return idx, [0]  # 0 indicates an all-zero block (special code)
+        return idx, [0], 0.0  # 0 indicates an all-zero block (special code)
 
     # Fast path for NoData blocks
     if nodata_value is not None and np.all(original_matrix == nodata_value):
-        return idx, [-1]  # -1 indicates an all-NoData block (special code)
+        return idx, [-1], 0.0  # -1 indicates an all-NoData block (special code)
 
     # Create a copy of the original matrix for modification
     matrix_for_compression = original_matrix.copy()
@@ -708,15 +709,15 @@ def process_block(
         agt = len(org_dct_zigzag) // 2
 
         # Compression
-        compressed_array, _, _ = refine_dct_array(
+        compressed_array, max_error, _ = refine_dct_array(
             org_dct_zigzag, accuracy, agt, accuracy + 1, 0, compression_copy
         )
-        # Return index, masks, and compressed data
+        # Return index, masks, compressed data, and max error
         result = [idx]
         for mask in masks:
             result.append(mask)
         result.append(compressed_array)
-        return idx, result
+        return idx, result, max_error
     else:
         # Standard compression without special values
         orginal_dct = dct2(matrix_for_compression)
@@ -726,10 +727,10 @@ def process_block(
         agt = len(org_dct_zigzag) // 2
 
         # Compression
-        compressed_array, _, _ = refine_dct_array(
+        compressed_array, max_error, _ = refine_dct_array(
             org_dct_zigzag, accuracy, agt, accuracy + 1, 0, matrix_for_compression
         )
-        return idx, compressed_array
+        return idx, compressed_array, max_error
 
 
 def compress_image(file_path, num_processes=None):
@@ -747,7 +748,7 @@ def compress_image(file_path, num_processes=None):
     Returns:
     -------
     tuple
-        (compressed_data, image, transformation, rasterCrs, padded_shape)
+        (compressed_data, image, transformation, rasterCrs, padded_shape, max_error)
     """
     print(f"Loading image: {file_path}")
 
@@ -814,6 +815,8 @@ def compress_image(file_path, num_processes=None):
 
     # Initialize results in blocks
     results_buffer = [None] * len(blocks)
+    # Track maximum error
+    max_error_global = 0.0
 
     # Set the number of processes for threads
     if num_processes is None:
@@ -825,11 +828,22 @@ def compress_image(file_path, num_processes=None):
         for result in tqdm(
             pool.imap_unordered(process_block, blocks), total=len(blocks)
         ):
-            idx, compressed_data = result
-            results_buffer[idx] = compressed_data
+            idx, compressed_data, max_error = result
+            results_buffer[idx] = compressed_data  # Store only the compressed data
+
+            # Update max error
+            if max_error > max_error_global:
+                max_error_global = max_error
+    if max_error_global >= accuracy:
+        print(f"Compression failed. Maximum error higher than accuracy: {max_error_global:.6f} > {accuracy:.6f}")
+        valid=False
+    else:
+        print(f"Compression completed. Maximum error: {max_error_global:.6f}")
+        valid=True
 
     # Prepare data for saving
     crs_str = rasterCrs.to_string() if rasterCrs else sourceCrs_force_declare
+    max_error_global = round(max_error_global, decimal+2)
     dcv_compress = [
         N,  # Block size
         accuracy,  # Compression accuracy
@@ -846,11 +860,12 @@ def compress_image(file_path, num_processes=None):
         transform.d,  # 0
         transform.e,  # terrain resolution of pixel in y axis
         transform.f,  # y coordinate
-        rasterCrs.to_string() # CRS info
+        crs_str,  # CRS info
+        max_error_global,  # Maximum error
     ]
 
     # Add compressed data
-    dcv_compress.extend(results_buffer)
+    dcv_compress.extend([data for data in results_buffer])
 
     # Save compressed data
     outfile = os.path.basename(file_path)
@@ -872,7 +887,7 @@ def compress_image(file_path, num_processes=None):
             crs_info = "none"
 
     # Prepare file parameters for filename
-    file_parameters = f"_N{N}_Acc{accuracy}_tdct{type_dct}_dec{decimal}_CRS{crs_info}"
+    file_parameters = f"_N{N}_Acc{accuracy}_tdct{type_dct}_dec{decimal}_CRS{crs_info}_valid{valid}"
 
     # Prepare file paths
     json_path = f"{result_dir}/{outfilename}{file_parameters}.json"
@@ -927,7 +942,7 @@ def compress_image(file_path, num_processes=None):
             print(f"Deleted temporary file: {temp_json_file}")
 
     print("Compression completed")
-    return dcv_compress, image, transform, rasterCrs, padded_shape
+    return dcv_compress, image, transform, rasterCrs, padded_shape, max_error_global
 
 
 def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
@@ -973,11 +988,14 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
     transform_d = float(dcv_compress[11])
     transform_e = float(dcv_compress[12])
     transform_f = float(dcv_compress[13])
-    rasterCrs = dcv_compress[14] # read
+    rasterCrs = str(dcv_compress[14]) # Crs
+    max_error_global = str(dcv_compress[15]) # decoded maximum error
+    
     # Scaling factor for restoring floating-point numbers
     print(
         f"Decompression parameters: N={N}, accuracy={accuracy}, size={img_x}x{img_y}, scaling factor={scaling_factor}"
     )
+    print(f"Maximum recorded compression error: {max_error_global}")
     print(f"CRS: {rasterCrs}")
 
     # List to store decompressed blocks
@@ -985,9 +1003,9 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
 
     print("Reconstructing original matrix")
     pbar = tqdm(
-        total=len(dcv_compress) - 15
-    )  # Counting from the first 14 elements with parameters
-    i = 15
+        total=len(dcv_compress) - 16
+    )  # Counting from the first 15 elements with parameters
+    i = 16
 
     while i < len(dcv_compress):
         array = np.zeros(N * N, dtype=np.float32)  # Empty matrix
@@ -1347,7 +1365,7 @@ def main(file_path=None, output_dir=None):
     # Otherwise, perform the compression process
     else:
         print(f"Compressing image: {file_path}")
-        dcv_compress, image, transform, rasterCrs, padded_shape = compress_image(
+        dcv_compress, image, transform, rasterCrs, padded_shape, max_error_global = compress_image(
             file_path
         )
 
