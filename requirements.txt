@@ -19,8 +19,3 @@ seaborn>=0.11.0
 
 # Compression
 py7zr>=0.16.0
-
-# Optional dependencies
-gdal>=3.3.0; sys_platform != "win32"
-gdal>=3.3.0; sys_platform == "win32" and python_version == "3.9"
-# For Windows, if GDAL wheel doesn't work, use conda: conda install -c conda-forge gdal
