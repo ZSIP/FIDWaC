@@ -224,13 +224,13 @@ graph TB
   - Dask: Parallel computing
   - rasterio: GeoTIFF handling
 - **File Format Support**:
-     **Interpolation**
-        - Txt,Csv: Point data delimiter=' '
-        - Shapefile: Vector data
-        - laspy: LiDAR point clouds
-     **Compression**
-     - GeoTif: rasster
-     - Asc GRID: grid
+  - **Interpolation**
+    - Txt,Csv: Point data with sep=' '
+    - Shapefile: Vector data
+    - laspy: LiDAR point clouds
+  - **Compression**
+    - GeoTif: raster with georefernce
+    - Asc GRID: grid
 - **Additional Tools**:
   - py7zr: 7z compression
   - tqdm: Progress visualization
