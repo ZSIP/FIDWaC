@@ -438,7 +438,7 @@ file: 2_xyz_geotif_N8_Acc0.1_tdct2_dec3_CRSepsg32633_validTrue.7z
   - tdct2 - type of DCT [intiger num.] - see https://docs.scipy.org/doc/scipy/reference/generated/scipy.fftpack.dct.html
   - dec3 - number after decimal point [intiger num.]
   - CRSepsg32633 - coordinate system
-  - validTrue - compression performed with assumed error is correct
+  - VT or VF - compression performed with assumed error is correct (VT) not correct (VF)
 
 
 <a name="multi-threading"></a>
