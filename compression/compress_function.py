@@ -836,10 +836,10 @@ def compress_image(file_path, num_processes=None):
                 max_error_global = max_error
     if max_error_global >= accuracy:
         print(f"Compression failed. Maximum error higher than accuracy: {max_error_global:.6f} > {accuracy:.6f}")
-        valid=False
+        valid='F'
     else:
         print(f"Compression completed. Maximum error: {max_error_global:.6f}")
-        valid=True
+        valid='T'
 
     # Prepare data for saving
     crs_str = rasterCrs.to_string() if rasterCrs else sourceCrs_force_declare
@@ -887,7 +887,7 @@ def compress_image(file_path, num_processes=None):
             crs_info = "none"
 
     # Prepare file parameters for filename
-    file_parameters = f"_N{N}_Acc{accuracy}_tdct{type_dct}_dec{decimal}_CRS{crs_info}_valid{valid}"
+    file_parameters = f"_N{N}_Acc{accuracy}_tdct{type_dct}_dec{decimal}_CRS{crs_info}_V{valid}"
 
     # Prepare file paths
     json_path = f"{result_dir}/{outfilename}{file_parameters}.json"
