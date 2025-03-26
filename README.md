@@ -242,7 +242,51 @@ graph TB
 - **Storage**: Sufficient space for input/output data
 - **Platform**: Compatible with Windows and Linux
 
+The application works best on **Linux** or on **Windows in WSL2**.  
+It is demanding in terms of RAM usage.  
+Especially in WSL2, you should set up **swap**.
+
 ---
+
+### ⚙️ Configure WSL2 Swap
+
+The application works best on **Linux** or **Windows with WSL2**.  
+It requires a significant amount of **RAM**.  
+Especially under **WSL2**, it's recommended to configure a **swap file**.
+
+---
+
+#### 🛠️ Steps:
+
+1. Create a file named `.wslconfig` in your user directory, for example:
+
+    ```
+    C:\Users\48503\.wslconfig
+    ```
+
+2. Paste the following content into that file:
+
+    ```
+    [wsl2]
+    memory=32GB
+    processors=15
+    swap=100GB
+    swapFile=B:\swapl_swap.vhdx
+    localhostForwarding=true
+    ```
+
+3. 📌 **Note**:  
+   It's best to place the `swapFile` on a **fast NVMe or SSD drive** to avoid performance bottlenecks.
+
+4. Restart WSL and verify the swap space is recognized:
+
+    ```bash
+    free -h
+    ```
+
+---
+
+
 
 <a name="installation"></a>
 ## 5. Installation
