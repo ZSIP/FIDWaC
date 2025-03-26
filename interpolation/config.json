@@ -1,5 +1,5 @@
 {
-    "results_directory": "/mnt/g/temp/idw/interpolation/interpolation/results/",
+    "results_directory": "/mnt/g/temp/idw/interpolation/results/",
     "z_field_name": "z",
     "filter_las": true,
     "filter_classes": [
@@ -8,7 +8,7 @@
     "smooth_result": true,
     "smooth_level": 1,
     "geoid_correction": true,
-    "geoid_correction_file": "/mnt/g/temp/idw/interpolation/interpolation/geoid/PL_geod.csv",
+    "geoid_correction_file": "/mnt/g/temp/idw/interpolation/geoid/PL_geod.csv",
     "sourceCrs": "epsg:2180",
     "geoidCrs": "epsg:4326",
     "N": 10,
@@ -17,9 +17,9 @@
     "leafsize": 10,
     "weights": 2.0,
     "save_data_to_shp": false,
-    "idw_dask": false,
+    "idw_dask": true,
     "idw_numpy": false,
-    "knn_calculate": true,
+    "knn_calculate": false,
     "interpolation_image_create": true,
     "csv_result": false,
     "surfer_grd": false
