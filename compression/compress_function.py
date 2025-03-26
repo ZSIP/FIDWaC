@@ -22,7 +22,7 @@ from rasterio.enums import Compression
 from typing import List, Tuple, Dict, Any, Optional, Union
 
 # Load configuration
-with open(r"./config.json", "r") as file:
+with open(r"./compression/config.json", "r") as file:
     config_data = json.load(file)
 
 # Parameters from configuration
@@ -1193,7 +1193,7 @@ def main(file_path=None, output_dir=None):
         Path to the output directory. If not provided, uses the default value.
     """
     # Load configuration
-    with open(r"./config.json", "r") as file:
+    with open(r"./compression/config.json", "r") as file:
         config_data = json.load(file)
 
     global result_dir
