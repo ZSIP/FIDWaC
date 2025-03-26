@@ -8,8 +8,7 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="expanded",
     menu_items={
-        'Get Help': 'https://www.help.com',
-        'Report a bug': "https://www.bug.com",
+        'Report a bug': "alysko@zut.edu.pl",
         'About': (
             "**FIDWaC (Fast Inverse Distance Weighting and Compression)** is a Python toolkit for:\n\n"
             "- **Fast creation of continuous surfaces** (rasters) from scattered measurement points using the IDW (Inverse Distance Weighting) method\n"
