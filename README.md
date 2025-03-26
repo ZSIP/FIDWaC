@@ -395,6 +395,13 @@ python compress_function.py path/to/your/geotiff.tif
 # For decompression (automatically detected by .7z extension)
 python compress_function.py path/to/your/compressed_file.7z
 ```
+#### Launch the Application ####
+You can also launch the FIDWaC application using Streamlit for an interactive interface.
+```bash
+# Run the app using Streamlit
+streamlit run app.py
+```
+This will start the Streamlit server and open the application in your default web browser. You can then interact with the FIDWaC tool through the web interface.
 
 <a name="batch"></a>
 ### 6.5 Batch Processing
