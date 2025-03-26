@@ -8,7 +8,7 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="expanded",
     menu_items={
-        'Report a bug': "alysko@zut.edu.pl",
+        'Report a bug': "alysko@zut.edu.pl",        
         'About': (
             "**FIDWaC (Fast Inverse Distance Weighting and Compression)** is a Python toolkit for:\n\n"
             "- **Fast creation of continuous surfaces** (rasters) from scattered measurement points using the IDW (Inverse Distance Weighting) method\n"
@@ -21,6 +21,8 @@ st.set_page_config(
         )
     }
 )
+# Add README link
+st.markdown("[📘 View README on GitHub](https://github.com/ZSIP/FIDWaC/blob/main/README.md)", unsafe_allow_html=True)
 
 def load_css():
     css_path = "./style/style.css"
