@@ -18,7 +18,7 @@ import shapefile
 import laspy
 from rasterio.transform import Affine
 from typing import Tuple, Union, List, Optional
-
+float = np.float32 
 def near_divided(number: np.ndarray, resolution: float) -> np.ndarray:
     """
     Round up a number to the nearest multiple of resolution.
