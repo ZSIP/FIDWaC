@@ -248,6 +248,7 @@ if geoid_correction:
     tree_geoid = spatial.cKDTree(np.column_stack((gdf.geometry.x, gdf.geometry.y)), leafsize=leafsize)  
     distance_geoid, index_geoid = tree_geoid.query(
     np.column_stack((data[:,0], data[:,1])),
+    workers=-1,
     k=1,
     distance_upper_bound=max_distance_geoid
     )    
