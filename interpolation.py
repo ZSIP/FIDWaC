@@ -221,25 +221,21 @@ Note:
 The correction only applies to points within the specified distance (max_distance_geoid)
 of a geoid model point. Points outside this range remain unchanged.
 """
-if geoid_correction:
-    import chardet    
+if geoid_correction: 
     print('Applying geoid correction...')
     # prepare geoid correction    
     max_distance_geoid = 2000
-    #check file
-    with open(geoid_correction_file, 'rb') as f:
-        rawdata = f.read(100000)
-        result = chardet.detect(rawdata)
-        encoding = result['encoding']
-        print(f"Encoding: {encoding}")
-
-    df = pd.read_csv(geoid_correction_file, sep=' ', names=['x', 'y', 'z'],  header=None, encoding=encoding)
-    gdf = gpd.GeoDataFrame(df,geometry=gpd.points_from_xy(df["x"], df["y"])).set_crs(geoidCrs)
+    #df = pd.read_csv(geoid_correction_file, sep=' ', names=['x', 'y', 'z'],  header=None, encoding=encoding)
+    #gdf = gpd.GeoDataFrame(df,geometry=gpd.points_from_xy(df["x"], df["y"])).set_crs(geoidCrs)
+    geoid = np.loadtxt(geoid_correction_file, delimiter=' ')
+    gdf = gpd.GeoDataFrame({'x': geoid[:, 0], 'y': geoid[:, 1], 'z': geoid[:, 2]},
+                            geometry=gpd.points_from_xy(geoid[:, 0], geoid[:, 1]),
+                            crs=geoidCrs
+                            )
     try:
         gdf=gdf.to_crs(sourceCrs)
     except:
         print(f'geoidCrs:{geoidCrs} and sourceCrs:{sourceCrs} are not compatible or this same')
-    #x_geoid, y_geoid, z_geoid = df['x'], df['y'], df['z']
     # prepare data for geoid correction 
     print('Preparing data for geoid correction...')    
     gdf_data = gpd.GeoDataFrame({'x': data[:,0], 'y': data[:,1], 'z': data[:,2]}, geometry=gpd.points_from_xy(data[:,0], data[:,1])).set_crs(sourceCrs)
