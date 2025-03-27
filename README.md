@@ -182,8 +182,8 @@ graph TB
     B2 --> C[Prepare the interpolation grid]
     C --> D[Construct KDTree]
     D --> E[Search for N nearest neighbors]
-    E --> F{Select IDW method}
-    F -->|NumPy + numexpr| G1[Standard IDW interpolation]
+    E --> F{Select IDW or KNN method}
+    F -->|NumPy + numexpr| G1[Standard IDW or KNN interpolation]
     F -->|Dask| G2[Parallel IDW interpolation]
     G1 --> H[Save results]
     G2 --> H
