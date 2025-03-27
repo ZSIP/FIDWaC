@@ -6,6 +6,7 @@ import json
 
 # Third-party library imports
 import numpy as np
+float = np.float32 
 import scipy
 from scipy import spatial
 import rasterio
@@ -18,7 +19,7 @@ import shapefile
 import laspy
 from rasterio.transform import Affine
 from typing import Tuple, Union, List, Optional
-float = np.float32 
+
 def near_divided(number: np.ndarray, resolution: float) -> np.ndarray:
     """
     Round up a number to the nearest multiple of resolution.
