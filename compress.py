@@ -17,6 +17,7 @@ from tqdm import tqdm
 from numpy.lib.stride_tricks import sliding_window_view
 from scipy.interpolate import griddata
 import rasterio
+float = np.float32 
 
 # Local modules
 from compression.compress_function import *
