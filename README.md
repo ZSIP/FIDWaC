@@ -248,6 +248,17 @@ The application works best on **Linux** or on **Windows in WSL2**.
 It is demanding in terms of RAM usage.  
 Especially in WSL2, you should set up **swap**.
 
+If you want to use files located on mounted Windows partitions (e.g. /mnt/c) in WSL2, you have to expect delays when reading and writing data. This is due to the intermediate layer between file systems, which significantly affects performance - especially when operating on many small files.  
+
+If you care about computation time, copy the data to the user's home directory in WSL2 (e.g. /home/user). There, the system operates directly on the native Linux file system, which significantly increases speed.  
+
+Alternatively, you can take advantage of Windows' native capabilities by running multithreaded calculations with a .job script. An example file can be found on GitHub: interpolation_job.ps1.
+  
+Run it in PowerShell using:  
+```
+./interpolation_job.ps1
+```
+
 ---
 
 ### ⚙️ Configure WSL2 Swap
