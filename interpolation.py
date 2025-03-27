@@ -38,7 +38,7 @@ def near_divided(number: np.ndarray, resolution: float) -> np.ndarray:
     """
     remainder = number % resolution
     nearest_value = number + remainder
-    return nearest_value.astype(np.int64)
+    return nearest_value.astype(np.int32)
 
 def calculate_idw(distance: np.ndarray) -> np.ndarray:
     """
