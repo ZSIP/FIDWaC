@@ -208,6 +208,8 @@ graph TB
     H --> I
     I --> J[serialization<br>with RLE]
     J --> K[Additional 7z compression]
+    F2 --> L[Create masks for mixed data<br>0 or -9999]
+    L --> G
 ```
 
 ---
