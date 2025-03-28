@@ -6,7 +6,6 @@ import json
 
 # Third-party library imports
 import numpy as np
-float = np.float32 
 import scipy
 from scipy import spatial
 import rasterio
