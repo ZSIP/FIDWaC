@@ -224,8 +224,6 @@ if geoid_correction:
     print('Applying geoid correction...')
     # prepare geoid correction    
     max_distance_geoid = 2000
-    #df = pd.read_csv(geoid_correction_file, sep=' ', names=['x', 'y', 'z'],  header=None, encoding=encoding)
-    #gdf = gpd.GeoDataFrame(df,geometry=gpd.points_from_xy(df["x"], df["y"])).set_crs(geoidCrs)
     geoid = np.loadtxt(geoid_correction_file, delimiter=' ')
     gdf = gpd.GeoDataFrame({'x': geoid[:, 0], 'y': geoid[:, 1], 'z': geoid[:, 2]},
                             geometry=gpd.points_from_xy(geoid[:, 0], geoid[:, 1]),
