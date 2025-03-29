@@ -200,16 +200,16 @@ graph TB
     B --> C[Divide into N×N blocks]
     C --> D[Distribute blocks to<br>multiple CPU cores]
     D --> E{Block type classification}
-    E -->|Special values only <br> no data, 0 | F1[0 or -1 encoding]
-    E -->|Contains data| F2[2D-DCT + zigzag encoding]
-    F2 --> G[Iterative coefficient<br>pruning for accuracy]
+    E -->|Special values only<br>no data, 0| F1[RLE encoding]
+    E -->|Mixed content| F2[RLE for special values<br>+ DCT for data]
+    E -->|Regular data only| F3[2D-DCT + zigzag encoding]
+    F3 --> G[Iterative coefficient<br>pruning for accuracy]
+    F2 --> G
     G --> H[Quality verification<br>error checking]
     F1 --> I[Merge processed blocks]
     H --> I
-    I --> J[MsgPack json --> binary copmpression]
+    I --> J[Final serialization]
     J --> K[Additional 7z compression]
-    F2 --> L[Create masks for mixed data<br>0 or -9999]
-    L --> G
 ```
 
 ---
