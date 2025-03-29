@@ -9,6 +9,7 @@ import shutil
 import multiprocessing
 from functools import partial
 import sys
+import msgpack
 
 # External libraries
 import numpy as np
@@ -917,30 +918,31 @@ def compress_image(file_path, num_processes=None):
         else:
             return obj
 
-    # Convert data to JSON-compatible format
+    # Convert numpy types to JSON-serializable types
     json_friendly_data = numpy_to_python(dcv_compress)
-    
-    # Save to 7z file
-    temp_json_file = f"{result_dir}/temp_{outfilename}_content.json"
-    with open(temp_json_file, "w") as f:
-        f.write(json.dumps(json_friendly_data, separators=(",", ":")))
 
-    with py7zr.SevenZipFile(
-        f"{result_dir}/{outfilename}{file_parameters}.7z", "w"
-    ) as archive:
-        archive.write(temp_json_file, arcname=f"json_obj_{outfilename}")
-    print(f"Data saved to 7z file: {result_dir}/{outfilename}{file_parameters}.7z")
+    # Pack to MessagePack
+    msgpack_data = msgpack.packb(json_friendly_data)
 
-    # Delete temporary files if not needed
+    # Save to temporary file
+    temp_msgpack_file = f"{result_dir}/temp_{outfilename}_content.msgpack"
+    with open(temp_msgpack_file, "wb") as f:
+        f.write(msgpack_data)
+
+    # Add to 7z archive
+    archive_name = f"{result_dir}/{outfilename}{file_parameters}.7z"
+    with py7zr.SevenZipFile(archive_name, "w") as archive:
+        archive.write(temp_msgpack_file, arcname=f"msgpack_obj_{outfilename}")
+
+    print(f"✅ Data saved to 7z file: {archive_name}")
+
+    # Delete temporary file
     if config_data.get("delete_temp_files", True):
-        if os.path.exists(json_path):
-            os.remove(json_path)
-            print(f"Deleted temporary file: {json_path}")
-        if os.path.exists(temp_json_file):
-            os.remove(temp_json_file)
-            print(f"Deleted temporary file: {temp_json_file}")
+        if os.path.exists(temp_msgpack_file):
+            os.remove(temp_msgpack_file)
+            print(f"🗑️ Deleted temporary file: {temp_msgpack_file}")
 
-    print("Compression completed")
+    print("✅ Compression completed")
     return dcv_compress, image, transform, rasterCrs, padded_shape, max_error_global
 
 
@@ -1125,13 +1127,11 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
     return final_matrix
 
 
-def load_compressed_data(
-    outfilename: str, file_parameters: str, result_dir: str
-) -> Dict:
+def load_compressed_data(outfilename: str, file_parameters: str, result_dir: str) -> dict:
     """
-    Loads compressed data from a 7z or JSON file.
+    Loads compressed data from a 7z archive containing MessagePack.
 
-    Parameters:
+    Parameters
     ----------
     outfilename : str
         Output filename without extension
@@ -1140,41 +1140,36 @@ def load_compressed_data(
     result_dir : str
         Path to directory with compressed files
 
-    Returns:
+    Returns
     -------
-    Dict
-        Dictionary containing decompressed data
-
-    Exceptions:
-    FileNotFoundError
-        When the compressed file doesn't exist
-    json.JSONDecodeError
-        When the JSON file is invalid
+    dict
+        Dictionary containing decompressed data or None if failed
     """
     try:
-        print("Reading compressed data from 7z file")
+        print("📦 Reading compressed data from 7z file")
         archive_path = os.path.join(result_dir, f"{outfilename}{file_parameters}.7z")
+
         with py7zr.SevenZipFile(archive_path, mode="r") as z:
             temp_dir = tempfile.mkdtemp()
             try:
                 z.extractall(temp_dir)
                 extracted_files = glob.glob(os.path.join(temp_dir, "*"))
                 if extracted_files:
-                    with open(extracted_files[0], "r") as f:
+                    extracted_path = extracted_files[0]
+                    with open(extracted_path, "rb") as f:
                         try:
-                            # Try to load as JSON - preferred format
-                            dcv_compress = json.load(f)
-                            print("Data loaded from 7z file as JSON")
-                            return dcv_compress
-                        except json.JSONDecodeError:
-                            print("Failed to load compressed data as JSON")
+                            raw = f.read()
+                            data = msgpack.unpackb(raw, raw=False)
+                            print("✅ Data loaded and decoded from MessagePack inside 7z")
+                            return data
+                        except Exception as decode_err:
+                            print(f"❌ Failed to decode MessagePack: {decode_err}")
                 else:
-                    print(f"No files found in extracted archive in {temp_dir}")
+                    print(f"⚠️ No files found in extracted archive in {temp_dir}")
             finally:
                 shutil.rmtree(temp_dir)
     except Exception as e:
-        print(f"An error occurred while reading 7z file: {str(e)}")
-        print("Failed to load compressed data")
+        print(f"❌ An error occurred while reading 7z file: {str(e)}")
         return None
 
 
