@@ -883,8 +883,8 @@ def compress_image(file_path, num_processes=None):
                 # If no EPSG code, use short form of CRS representation
                 crs_info = str(rasterCrs).replace(":", "_").replace(" ", "_")[:20]
         except:
-            # In case of failure, use 'none'
-            crs_info = "none"
+            # In case of failure, use config sourceCrs_force_declare
+            crs_info = sourceCrs_force_declare
 
     # Prepare file parameters for filename
     file_parameters = f"_N{N}_Acc{accuracy}_tdct{type_dct}_dec{decimal}_CRS{crs_info}_V{valid}"
