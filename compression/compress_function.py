@@ -174,17 +174,6 @@ def from_zigzag(vector: np.ndarray, rows: int, cols: int) -> np.ndarray:
             index += count
     return matrix
 
-#reverse integer encoding format
-def reverse_sign_encode(data):
-    if isinstance(data, list):
-        return [reverse_sign_encode(x) for x in data]
-    elif isinstance(data, dict):
-        return {k: reverse_sign_encode(v) for k, v in data.items()}
-    elif isinstance(data, int):
-        return -data
-    else:
-        return data
-
 # ===== COMPRESSION ACCURACY CHECK FUNCTIONS =====
 def check_precision_decompression_dct(
     original_matrix: np.ndarray, idct_reconstructed: np.ndarray
@@ -930,7 +919,6 @@ def compress_image(file_path, num_processes=None):
 
     # Convert data to JSON-compatible format
     json_friendly_data = numpy_to_python(dcv_compress)
-    json_friendly_data=reverse_sign_encode(json_friendly_data)
     
     # Save to 7z file
     temp_json_file = f"{result_dir}/temp_{outfilename}_content.json"
@@ -981,8 +969,7 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
     print("Starting decompression")
 
     print("Decompressing data")
-    # reverse decode
-    dcv_compress=reverse_sign_encode(dcv_compress)
+
     # Reconstruction parameters
     N = int(dcv_compress[0])  # Block size
     accuracy = float(dcv_compress[1])  # Accuracy
