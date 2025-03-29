@@ -206,7 +206,7 @@ graph TB
     G --> H[Quality verification<br>error checking]
     F1 --> I[Merge processed blocks]
     H --> I
-    I --> J[serialization<br>with RLE]
+    I --> J[MsgPack json --> binary copmpression]
     J --> K[Additional 7z compression]
     F2 --> L[Create masks for mixed data<br>0 or -9999]
     L --> G
