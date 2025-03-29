@@ -19,6 +19,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 from scipy.interpolate import griddata
 from scipy.fftpack import dct, idct
 import rasterio
+from pyproj import CRS 
 from rasterio.enums import Compression
 from typing import List, Tuple, Dict, Any, Optional, Union
 
@@ -872,7 +873,7 @@ def compress_image(file_path, num_processes=None):
     outfilename = os.path.splitext(outfile)[0]
 
     # Update file parameters with CRS information
-    crs_info = "none"
+    crs_info = CRS(sourceCrs_force_declare).to_epsg()
     if rasterCrs is not None:
         try:
             # Attempt to get EPSG code
@@ -884,7 +885,7 @@ def compress_image(file_path, num_processes=None):
                 crs_info = str(rasterCrs).replace(":", "_").replace(" ", "_")[:20]
         except:
             # In case of failure, use config sourceCrs_force_declare
-            crs_info = sourceCrs_force_declare
+            crs_info
 
     # Prepare file parameters for filename
     file_parameters = f"_N{N}_Acc{accuracy}_tdct{type_dct}_dec{decimal}_CRS{crs_info}_V{valid}"
