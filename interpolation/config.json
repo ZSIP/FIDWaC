@@ -1,13 +1,13 @@
 {
     "results_directory": "/mnt/g/temp/idw/interpolation/results/",
     "z_field_name": "z",
-    "filter_las": true,
+    "filter_las": false,
     "filter_classes": [
         2
     ],
     "smooth_result": true,
     "smooth_level": 1,
-    "geoid_correction": true,
+    "geoid_correction": false,
     "geoid_correction_file": "/mnt/g/temp/idw/interpolation/geoid/PL_geod.csv",
     "sourceCrs": "epsg:2180",
     "geoidCrs": "epsg:4326",
