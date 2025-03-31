@@ -220,40 +220,42 @@ Note:
 The correction only applies to points within the specified distance (max_distance_geoid)
 of a geoid model point. Points outside this range remain unchanged.
 """
-if geoid_correction: 
-    print('Applying geoid correction...')
-    # prepare geoid correction    
-    max_distance_geoid = 2000
-    geoid = np.loadtxt(geoid_correction_file, delimiter=' ')
-    gdf = gpd.GeoDataFrame({'x': geoid[:, 0], 'y': geoid[:, 1], 'z': geoid[:, 2]},
-                            geometry=gpd.points_from_xy(geoid[:, 0], geoid[:, 1]),
-                            crs=geoidCrs
-                            )
-    try:
-        gdf=gdf.to_crs(sourceCrs)
-    except:
-        print(f'geoidCrs:{geoidCrs} and sourceCrs:{sourceCrs} are not compatible or this same')
-    # prepare data for geoid correction 
-    print('Preparing data for geoid correction...')    
-    gdf_data = gpd.GeoDataFrame({'x': data[:,0], 'y': data[:,1], 'z': data[:,2]}, geometry=gpd.points_from_xy(data[:,0], data[:,1])).set_crs(sourceCrs)
-    # Create KD-Tree for geoid correction
-    print('Creating KD-Tree for geoid correction...')
-    tree_geoid = spatial.cKDTree(np.column_stack((gdf.geometry.x, gdf.geometry.y)), leafsize=leafsize)  
-    distance_geoid, index_geoid = tree_geoid.query(
-    np.column_stack((data[:,0], data[:,1])),
-    workers=-1,
-    k=1,
-    distance_upper_bound=max_distance_geoid
-    )    
-    valid_mask = np.isfinite(distance_geoid)
-    z_geoid_nearest = np.full(data.shape[0], np.nan)
-    z_geoid_vals = gdf['z'].to_numpy()
-    z_geoid_nearest[valid_mask] = z_geoid_vals[index_geoid[valid_mask]]
-    # uppdate data z
-    data[valid_mask, 2] = data[valid_mask, 2] - z_geoid_nearest[valid_mask]
-    print("Geoid correction applied to", valid_mask.sum(), "points.")
-    del gdf, gdf_data, tree_geoid, distance_geoid, index_geoid, valid_mask, z_geoid_nearest, z_geoid_vals # Free up memory
-
+try:
+    if geoid_correction: 
+        print('Applying geoid correction...')
+        # prepare geoid correction    
+        max_distance_geoid = 2000
+        geoid = np.loadtxt(geoid_correction_file, delimiter=' ')
+        gdf = gpd.GeoDataFrame({'x': geoid[:, 0], 'y': geoid[:, 1], 'z': geoid[:, 2]},
+                                geometry=gpd.points_from_xy(geoid[:, 0], geoid[:, 1]),
+                                crs=geoidCrs
+                                )
+        try:
+            gdf=gdf.to_crs(sourceCrs)
+        except:
+            print(f'geoidCrs:{geoidCrs} and sourceCrs:{sourceCrs} are not compatible or this same')
+        # prepare data for geoid correction 
+        print('Preparing data for geoid correction...')    
+        gdf_data = gpd.GeoDataFrame({'x': data[:,0], 'y': data[:,1], 'z': data[:,2]}, geometry=gpd.points_from_xy(data[:,0], data[:,1])).set_crs(sourceCrs)
+        # Create KD-Tree for geoid correction
+        print('Creating KD-Tree for geoid correction...')
+        tree_geoid = spatial.cKDTree(np.column_stack((gdf.geometry.x, gdf.geometry.y)), leafsize=leafsize)  
+        distance_geoid, index_geoid = tree_geoid.query(
+        np.column_stack((data[:,0], data[:,1])),
+        workers=-1,
+        k=1,
+        distance_upper_bound=max_distance_geoid
+        )    
+        valid_mask = np.isfinite(distance_geoid)
+        z_geoid_nearest = np.full(data.shape[0], np.nan)
+        z_geoid_vals = gdf['z'].to_numpy()
+        z_geoid_nearest[valid_mask] = z_geoid_vals[index_geoid[valid_mask]]
+        # uppdate data z
+        data[valid_mask, 2] = data[valid_mask, 2] - z_geoid_nearest[valid_mask]
+        print("Geoid correction applied to", valid_mask.sum(), "points.")
+        del gdf, gdf_data, tree_geoid, distance_geoid, index_geoid, valid_mask, z_geoid_nearest, z_geoid_vals # Free up memory
+except:
+    print("🌐 no geoid file")    
 # Print data statistics
 try:    
     print('\nData Statistics:')
