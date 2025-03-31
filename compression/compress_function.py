@@ -14,7 +14,6 @@ import msgpack
 import numpy as np
 import py7zr
 from tqdm import tqdm
-from numpy.lib.stride_tricks import sliding_window_view
 from scipy.interpolate import griddata
 from scipy.fftpack import dct, idct
 import rasterio
