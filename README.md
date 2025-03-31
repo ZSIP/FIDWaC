@@ -28,6 +28,7 @@ The package is designed for efficient processing and storage of geospatial data 
 8. [Key Functions](#key-functions)
 9. [Examples](#examples)
 10. [Advantages and Applications](#benefits)
+11. [Test](#tests)
 
 ---
 
@@ -630,7 +631,9 @@ for block_idx, compressed_data in results:
 - **GIS Data Management**: Efficient storage of large raster catalogs
 
 ---
-## Tests – Interpolation
+<a name="tests"></a>
+## 11. Tests
+Interpolation
 
 Software testing was performed on a VMware virtualized server based on an AMD Epyc 7H12. The virtual instance had 32 cores and 256 GB of RAM. The operating system was Linux Ubuntu 22.04 LTS.  
 
@@ -689,7 +692,7 @@ All files used the UTM-33 coordinate system (EPSG:32633). Interpolation was repe
 
 ---
 
-## Test - compression
+Compression
 
 The main focus of the compression application is to reduce the file size as much as possible. Of course, the size depends mainly on the assumed amount of lossy information. For example, a file with a lossy height of 5 cm will be noticeably larger than the same file with a lossy compression height of up to 10 cm. This is due to the longer strings of numbers in cosine compression.  
 
