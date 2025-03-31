@@ -630,6 +630,162 @@ for block_idx, compressed_data in results:
 - **GIS Data Management**: Efficient storage of large raster catalogs
 
 ---
+## Tests – Interpolation
+
+Software testing was performed on a VMware virtualized server based on an AMD Epyc 7H12. The virtual instance had 32 cores and 256 GB of RAM. The operating system was Linux Ubuntu 22.04 LTS.  
+
+The main task we set ourselves was the **speed of the interpolation process**. For comparison, we chose the most popular GUI applications:
+- **QGIS Desktop 3.22** (GDALw 3.4.1),
+- **SAGA GIS 7.3.0**.
+
+We ran tests on three different files:
+- two in `*.txt` and `*.shp` format,
+- one LIDAR file in `*.las`.
+
+All files used the UTM-33 coordinate system (EPSG:32633). Interpolation was repeated 20 times. Final results reflect the **average of all iterations**.
+
+> 📝 Since QGIS and SAGA do not support interpolation directly on `*.txt` files, we converted them to `*.shp`. However, loading `*.shp` takes significantly longer in Python, so comparative tests are shown for both formats.
+
+### Tab. 2 – Parameters of the files used
+
+| File name               | Number of points (millions) | File size [MB] |
+|------------------------|------------------------------|----------------|
+| 2-xyz-1m2.txt (.shp)   | 2.002434                     | 67.4           |
+| 6-xyz-332m2.txt (.shp) | 10.340227                    | 447            |
+| riverbottom.las        | 17.216657                    | 558.0          |
+
+---
+
+### Tab. 3 – Interpolation time comparison: Python (FIDWaC), QGIS, SAGA
+
+| File name               | Python IDW [s] | QGIS GDAL [s] | SAGA [s] | N  | Resolution | Max Distance | Leafsize | Weights |
+|------------------------|----------------|----------------|----------|----|------------|---------------|-----------|----------|
+| 2-xyz-1m2.txt*         | 2.64           | -              | -        | 20 | 0.1        | 5             | 10        | 2        |
+| 2-xyz-1m2.txt          | 5.97           | -              | -        | 100| 0.1        | 5             | 10        | 2        |
+| 2-xyz-1m2.txt          | 6.00           | -              | -        | 100| 0.1        | 20            | 10        | 2        |
+| 2-xyz-1m2.txt.shp*     | 17.79          | 87.64          | 61.04    | 20 | 0.1        | 5             | 10        | 2        |
+| 6-xyz-332m2.txt.shp    | 98.7           | 23544.1        | 6592.1   | 100| 0.1        | 20            | 10        | 2        |
+
+> \* analyzes a file with the same number of elements but in different formats (`*.txt` and `*.shp`) – `*.txt` loads faster.  
+> \* the same analysis using NumPy + DASK to optimize memory usage.  
+
+**Legend:**
+- N – number of nearest neighbors  
+- Resolution – target raster resolution  
+- Max Distance – maximum distance of N neighbors  
+- Leafsize – number of elements in the KDTree  
+- Weights – weight of the square of the distance  
+- No geoid correction used  
+
+---
+
+### Tab. 4 – Interpolation time: Python (FIDWaC) vs WhiteboxTools
+
+| File name        | Python IDW [s] | Whitebox [s] | N  | Resolution | Max Distance | Leafsize | Weights |
+|------------------|----------------|---------------|----|------------|---------------|-----------|----------|
+| riverbottom.las  | 107.695        | 116.906       | 50 | 0.1        | 5             | 10        | 2        |
+
+> \* same notes apply as above
+
+---
+
+## Test - compression
+
+The main focus of the compression application is to reduce the file size as much as possible. Of course, the size depends mainly on the assumed amount of lossy information. For example, a file with a lossy height of 5 cm will be noticeably larger than the same file with a lossy compression height of up to 10 cm. This is due to the longer strings of numbers in cosine compression.  
+
+Examples of compressed data and the results are shown in **Fig. 3** and in **Tables 5–6**. In the absence of similar solutions, the results were compared to:
+- ZIP,
+- 7zip,
+- TIF LZW compression (on a lossy GeoTIFF).
+
+These serve only as references against the DCT result, not as direct comparisons.
+
+---
+
+### 📁 Fig. 3 – Sample files for compression
+
+![Sample Compressed Files](https://zutedupl-my.sharepoint.com/personal/alysko_zut_edu_pl/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Falysko%5Fzut%5Fedu%5Fpl%2FDocuments%2Fpublikacje%2F2025%2FFIDWAC%2Ffigures%2Ffig3%2Ejpg&parent=%2Fpersonal%2Falysko%5Fzut%5Fedu%5Fpl%2FDocuments%2Fpublikacje%2F2025%2FFIDWAC%2Ffigures&ga=1)
+
+
+---
+
+### 📊 Table 5 – File parameters and compression results
+
+| File name           | Shape Xpx/Ypx | Accuracy [m] | Source Size [MB] | Stdev [m] | Mean [m] | Valid [%] | FIDWaC DCT [MB] (CR) | GeoTIFF LZW [MB] (CR) | ZIP [MB] (CR) | 7zip [MB] (CR) |
+|---------------------|----------------|----------------|-------------------|------------|-----------|------------|------------------------|------------------------|----------------|-----------------|
+| 2_xyz_geotif.tif    | 1801/1741, 16   | ±0.05         | 23.9              | 0.94       | -9.57     | 100        | 0.0449 (532.29)        | 1.079 (22.15)          | 0.991 (24.12)  | 0.986 (24.24)   |
+| 2_xyz_geotif.tif    | 1801/1741, 16   | ±0.001        | 23.9              | 0.94       | -9.57     | 100        | 0.346 (69.08)          | 7.742 (3.09)           | 7.742 (3.09)   | 7.738 (3.09)    |
+| river_valley.asc    | 2223/2446, 8    | ±0.05         | 27.3              | 0.29       | 0.31      | 88.53      | 2.423 (11.27)          | 16.906 (1.61)          | 16.906 (1.61)  | 16.906 (1.61)   |
+| riverbotton.tif     | 9599/9632, 8    | 0.05          | 352.0             | 2.02       | -6.52     | 21.05      | 2.238 (157.28)         | 16.847 (20.89)         | 15.770 (22.32) | 15.762 (22.33)  |
+| seashore.tif        | 1090/1218, 16   | ±0.05         | 10.1              | 5.50       | 4.92      | 89.03      | 0.509 (19.84)          | 3.802 (2.66)           | 3.801 (2.66)   | 3.802 (2.66)    |
+
+> \* FIDWaC DCT reconstructed from cosine transform.  
+> \* Compression Ratio (CR) = Original size / Compressed size.  
+> \* Results may vary depending on file system (tested on NTFS / Win11).  
+
+---
+
+### 📊 Table 6 – Compression at different accuracy levels
+
+| File name             | Shape Xpx/Ypx | Accuracy [m] | Source Size [MB] | Stdev [m] | Mean [m] | Valid [%] | FIDWaC DCT [MB] (CR) | GeoTIFF LZW [MB] (CR) | ZIP [MB] (CR) | 7zip [MB] (CR) |
+|------------------------|----------------|---------------|-------------------|------------|-----------|------------|------------------------|------------------------|----------------|-----------------|
+| urban_buildings.tif    | 4438/4890, 32   | ±0.05        | 165.0             | 11.98      | 26.55     | 88.63      | 24.007 (6.87)          | 60.125 (2.74)          | 60.106 (2.75)  | 60.095 (3.28)   |
+| urban_buildings.tif    | 4438/4890, 16   | ±0.05        | 165.0             | 11.98      | 26.55     | 88.63      | 21.769 (7.58)          | 60.003 (2.75)          | 59.984 (2.75)  | 59.974 (2.75)   |
+| urban_buildings.tif    | 4438/4890, 8    | ±0.05        | 165.0             | 11.98      | 26.55     | 88.63      | 19.223 (8.58)          | 59.745 (2.76)          | 59.726 (2.76)  | 59.715 (2.75)   |
+| urban_buildings.tif    | 4438/4890, 8    | ±0.1         | 165.0             | 11.98      | 26.55     | 88.63      | 16.778 (9.83)          | 53.149 (3.10)          | 53.114 (3.11)  | 53.115 (3.11)   |
+| urban_buildings.tif    | 4438/4890, 8    | ±0.2         | 165.0             | 11.98      | 26.55     | 88.63      | 15.110 (10.92)         | 44.472 (3.71)          | 44.433 (3.71)  | 44.436 (3.71)   |
+| urban_buildings.tif    | 4438/4890, 8    | ±0.001       | 165.0             | 11.98      | 26.55     | 88.63      | 21.422 (7.70)          | 60.061 (2.75)          | 60.042 (2.75)  | 60.032 (2.75)   |
+
+---
+
+## 📈 Analysis of Compression Performance
+
+To assess the impact of individual parameters on compression quality and performance, **6,000 GeoTIFF files** (400×400 px, 0.5 m resolution) were analysed. Files were grouped as:
+- **DSM** (Digital Surface Model),
+- **DTM** (Digital Terrain Model).
+
+Each file was analysed for:
+
+- **Gradient Mean** – rate of change between pixels; lower means easier compression.
+- **Entropy** – higher = more complex = harder to compress.
+- **Compression Block Size (N)** – larger blocks = higher compression (but may lose quality).
+- **Unique Value Count** – more diversity = harder to compress.
+- **Skewness** – strong asymmetry may favor compression.
+- Additional: **Standard Deviation**, **Mean**, **Kurtosis**, **Range**, **IQR**.
+
+All files were compressed with:
+- `accuracy = 0.05 m`,  
+- `decimal = 2`,  
+- `type_dct = 2`,  
+- Block sizes: `N = 4, 8, 16, 32`.
+
+Comparison includes both:
+- Final `.7z` archive size (DCT + RLE),
+- Reconstructed GeoTIFF with LZW compression.
+
+---
+
+### 📊 Fig. 4 – Feature Importance (Random Forest)
+
+![Feature Importance Analysis](https://zutedupl-my.sharepoint.com/:i:/g/personal/alysko_zut_edu_pl/EX9cu2AHsHNOvKbUt7ZPb48BLaK9A-Ffm9-0oqkPVqXeFw?e=D3upuy)
+
+> The average gradient, block size (N), and entropy had the greatest effect on compression performance.
+
+---
+
+### 📉 Fig. 5 – Compression Size Reduction by Block Size (N)
+
+![Compression Block Size Comparison](link_do_obrazka_fig5.png)
+
+> DSM: best compression with N=4, ratio ~56.1%  
+> DTM: best with N=8, ratio ~87.2%  
+> GeoTIFF + LZW offered limited size reduction and sometimes increased file size.
+
+---
+
+> 🛑 Two DSM files with `N=32` did not meet the expected accuracy threshold and were flagged as `Valid = False` (see full results in the GitHub README).
+
+
 
 ## License
 
