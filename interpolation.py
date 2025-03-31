@@ -255,7 +255,7 @@ try:
         print("Geoid correction applied to", valid_mask.sum(), "points.")
         del gdf, gdf_data, tree_geoid, distance_geoid, index_geoid, valid_mask, z_geoid_nearest, z_geoid_vals # Free up memory
 except:
-    print("🌐 no geoid file")    
+    print("🌐 error read or no geoid file")    
 # Print data statistics
 try:    
     print('\nData Statistics:')
