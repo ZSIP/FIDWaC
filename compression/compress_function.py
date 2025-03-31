@@ -451,41 +451,6 @@ def reconstructed_matrix_function(
 
     return idct_reconstructed, final_nodata_count, final_zero_count
 
-
-# ===== ERROR HANDLING =====
-
-
-def handle_error(
-    error_type: str,
-    message: str,
-    exception: Optional[Exception] = None,
-    exit_program: bool = False,
-) -> None:
-    """
-    Unified function for error handling in the application.
-
-    Parameters:
-    ----------
-    error_type : str
-        Error type (e.g., 'IO', 'Format', 'Compression')
-    message : str
-        Error message
-    exception : Optional[Exception]
-        Exception object, if available
-    exit_program : bool
-        Whether to terminate the program after the error
-    """
-    error_msg = f"[ERROR {error_type}] {message}"
-    if exception:
-        error_msg += f"\nDetails: {str(exception)}"
-
-    print(error_msg)
-
-    if exit_program:
-        print("The program will be terminated due to a critical error.")
-        sys.exit(1)
-
-
 # ===== MASK ENCODING AND DECODING =====
 
 
