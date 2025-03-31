@@ -702,16 +702,16 @@ These serve only as references against the DCT result, not as direct comparisons
 
 ---
 
-### 📁 Fig. 3 – Sample files for compression
+### Fig. – Sample files for compression
 
-![Sample Compressed Files](https://zutedupl-my.sharepoint.com/personal/alysko_zut_edu_pl/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Falysko%5Fzut%5Fedu%5Fpl%2FDocuments%2Fpublikacje%2F2025%2FFIDWAC%2Ffigures%2Ffig3%2Ejpg&parent=%2Fpersonal%2Falysko%5Fzut%5Fedu%5Fpl%2FDocuments%2Fpublikacje%2F2025%2FFIDWAC%2Ffigures&ga=1)
+![Sample Compressed Files](fig/fig3.jpg)
 
 
 ---
 
-### 📊 Table 5 – File parameters and compression results
+### Table – File parameters and compression results
 
-| File name           | Shape Xpx/Ypx | Accuracy [m] | Source Size [MB] | Stdev [m] | Mean [m] | Valid [%] | FIDWaC DCT [MB] (CR) | GeoTIFF LZW [MB] (CR) | ZIP [MB] (CR) | 7zip [MB] (CR) |
+| File name           | Shape Xpx/Ypx, N | Accuracy [m] | Source Size [MB] | Stdev [m] | Mean [m] | Valid [%] | FIDWaC DCT [MB] (CR) | GeoTIFF LZW [MB] (CR) | ZIP [MB] (CR) | 7zip [MB] (CR) |
 |---------------------|----------------|----------------|-------------------|------------|-----------|------------|------------------------|------------------------|----------------|-----------------|
 | 2_xyz_geotif.tif    | 1801/1741, 16   | ±0.05         | 23.9              | 0.94       | -9.57     | 100        | 0.0449 (532.29)        | 1.079 (22.15)          | 0.991 (24.12)  | 0.986 (24.24)   |
 | 2_xyz_geotif.tif    | 1801/1741, 16   | ±0.001        | 23.9              | 0.94       | -9.57     | 100        | 0.346 (69.08)          | 7.742 (3.09)           | 7.742 (3.09)   | 7.738 (3.09)    |
@@ -725,9 +725,9 @@ These serve only as references against the DCT result, not as direct comparisons
 
 ---
 
-### 📊 Table 6 – Compression at different accuracy levels
+### Table - Compression at different accuracy levels
 
-| File name             | Shape Xpx/Ypx | Accuracy [m] | Source Size [MB] | Stdev [m] | Mean [m] | Valid [%] | FIDWaC DCT [MB] (CR) | GeoTIFF LZW [MB] (CR) | ZIP [MB] (CR) | 7zip [MB] (CR) |
+| File name             | Shape Xpx/Ypx, N | Accuracy [m] | Source Size [MB] | Stdev [m] | Mean [m] | Valid [%] | FIDWaC DCT [MB] (CR) | GeoTIFF LZW [MB] (CR) | ZIP [MB] (CR) | 7zip [MB] (CR) |
 |------------------------|----------------|---------------|-------------------|------------|-----------|------------|------------------------|------------------------|----------------|-----------------|
 | urban_buildings.tif    | 4438/4890, 32   | ±0.05        | 165.0             | 11.98      | 26.55     | 88.63      | 24.007 (6.87)          | 60.125 (2.74)          | 60.106 (2.75)  | 60.095 (3.28)   |
 | urban_buildings.tif    | 4438/4890, 16   | ±0.05        | 165.0             | 11.98      | 26.55     | 88.63      | 21.769 (7.58)          | 60.003 (2.75)          | 59.984 (2.75)  | 59.974 (2.75)   |
@@ -738,7 +738,7 @@ These serve only as references against the DCT result, not as direct comparisons
 
 ---
 
-## 📈 Analysis of Compression Performance
+## Analysis of Compression Performance
 
 To assess the impact of individual parameters on compression quality and performance, **6,000 GeoTIFF files** (400×400 px, 0.5 m resolution) were analysed. Files were grouped as:
 - **DSM** (Digital Surface Model),
@@ -765,17 +765,17 @@ Comparison includes both:
 
 ---
 
-### 📊 Fig. 4 – Feature Importance (Random Forest)
+### Feature Importance (Random Forest)
 
-![Feature Importance Analysis](https://zutedupl-my.sharepoint.com/:i:/g/personal/alysko_zut_edu_pl/EX9cu2AHsHNOvKbUt7ZPb48BLaK9A-Ffm9-0oqkPVqXeFw?e=D3upuy)
+![Feature Importance Analysis](fig/fig4.jpg)
 
 > The average gradient, block size (N), and entropy had the greatest effect on compression performance.
 
 ---
 
-### 📉 Fig. 5 – Compression Size Reduction by Block Size (N)
+### Compression Size Reduction by Block Size (N)
 
-![Compression Block Size Comparison](link_do_obrazka_fig5.png)
+![Compression Block Size Comparison](fig/fig5.jpg)
 
 > DSM: best compression with N=4, ratio ~56.1%  
 > DTM: best with N=8, ratio ~87.2%  
