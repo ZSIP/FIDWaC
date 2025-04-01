@@ -13,7 +13,7 @@ The package is designed for efficient processing and storage of geospatial data 
 ## Table of Contents
 1. [Features](#features)
 2. [Tool Structure](#structure)
-   1. [interpolation_FIT.py](#interpolation)
+   1. [interpolation.py](#interpolation)
    2. [compress_function.py](#compression)
 3. [Operation Diagrams](#schemes)
 4. [System Requirements](#requirements)
@@ -65,7 +65,7 @@ The package is designed for efficient processing and storage of geospatial data 
 ## 2. Tool Structure
 
 <a name="interpolation"></a>
-### 2.1 `interpolation_FIT.py`
+### 2.1 `interpolation.py`
 
 Script for advanced spatial data interpolation using IDW method and KDTree optimization.
 
@@ -431,17 +431,17 @@ Click the link below to download the data:
 
 [SAMPLE_DATA](https://zutedupl-my.sharepoint.com/:f:/g/personal/alysko_zut_edu_pl/Et_gh1jMHc1FpyUV54IvqbIBSMft-kS_2VjHdPQXj-GtOg?e=8sZVvT))
 
-#### Using interpolation_FIT.py
+#### Using interpolation.py
 
 ```bash
 # Basic usage with a shapefile
-python interpolation_FIT.py path/to/your/data.shp
+python interpolation.py path/to/your/data.shp
 
 # Using with a LAS/LAZ file
-python interpolation_FIT.py path/to/lidar.las
+python interpolation.py path/to/lidar.las
 
 # Using with a CSV file
-python interpolation_FIT.py path/to/points.csv
+python interpolation.py path/to/points.csv
 ```
 
 #### Using compress_function.py
@@ -470,10 +470,10 @@ FIDWaC supports batch processing of multiple files using tools like `find` and `
 
 ```bash
 # Process all shapefiles in a directory
-find ./source -name '*.shp' | parallel --ungroup -j 16 python3 -u interpolation_FIT.py {}
+find ./source -name '*.shp' | parallel --ungroup -j 16 python3 -u interpolation.py {}
 
 # Process all LAS files with a specific naming pattern
-find ./source -name '*.laz' | parallel --ungroup -j 16 python3 -u interpolation_FIT.py {}
+find ./source -name '*.laz' | parallel --ungroup -j 16 python3 -u interpolation.py {}
 ```
 
 #### Batch Compression
