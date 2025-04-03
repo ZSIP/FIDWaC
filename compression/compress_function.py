@@ -1195,28 +1195,6 @@ def main(file_path=None, output_dir=None):
         # Get parameters from the file name
         file_parts = outfilename.split("_")
 
-        # Extract CRS information
-        # crs_info = None
-        # for part in file_parts:
-        #     if part.startswith("CRS"):
-        #         crs_info = part[3:]  # Remove 'CRS' from the beginning
-        #         break
-
-        # if crs_info and crs_info.startswith("epsg"):
-        #     try:
-        #         # Attempt to get EPSG code
-        #         epsg_code = int(
-        #             crs_info[4:]
-        #         )  # Remove 'epsg' from the beginning and convert to int
-        #         rasterCrs = rasterio.crs.CRS.from_epsg(epsg_code)
-        #         print(f"Read CRS from file name: EPSG:{epsg_code}")
-        #     except ValueError:
-        #         print(f'Error: Cannot read EPSG code from "{crs_info}"')
-        #         return
-        # else:
-        #     print("Warning: No CRS information found in file name")
-        #     rasterCrs = None
-
         # Extract block size N and accuracy Acc information
         N_value = None
         acc_value = None
