@@ -898,19 +898,19 @@ def compress_image(file_path, num_processes=None):
     with py7zr.SevenZipFile(archive_name, "w") as archive:
         archive.write(temp_msgpack_file, arcname=f"msgpack_obj_{outfilename}")
 
-    print(f"✅ Data saved to 7z file: {archive_name}")
+    print(f" Data saved to 7z file: {archive_name}")
 
     # Delete temporary file
     if config_data.get("delete_temp_files", True):
         if os.path.exists(temp_msgpack_file):
             os.remove(temp_msgpack_file)
-            print(f"🗑️ Deleted temporary file: {temp_msgpack_file}")
+            print(f" Deleted temporary file: {temp_msgpack_file}")
 
-    print("✅ Compression completed")
+    print(" Compression completed")
     return dcv_compress, image, transform, rasterCrs, padded_shape, max_error_global
 
 
-def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
+def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape, output_dir=None):
     """
     Function for decompressing an image.
 
@@ -926,6 +926,8 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
         Raster coordinate system
     padded_shape : tuple
         Dimensions of the padded matrix
+    output_dir : str, optional
+        Directory where the decompressed file should be saved. If None, uses result_dir from config.
 
     Returns:
     -------
@@ -1066,8 +1068,10 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
 
     # Save final reconstruction
     outfile = os.path.basename(image.name)
+    output_path = os.path.join(output_dir if output_dir else result_dir, f"{outfile}.tif")
+    
     with rasterio.open(
-        f"{result_dir}/{outfile}.tif",
+        output_path,
         "w",
         driver="GTiff",
         height=final_matrix.shape[0],
@@ -1087,31 +1091,26 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape):
     ) as interpRaster:  # Setting NoData value for output file
         interpRaster.write(final_matrix, 1)
 
-    print("Decompression completed")
+    print(f"Decompression completed. Output saved to: {output_path}")
     return final_matrix
 
 
-def load_compressed_data(outfilename: str, file_parameters: str, result_dir: str) -> dict:
+def load_compressed_data(archive_path: str) -> dict:
     """
     Loads compressed data from a 7z archive containing MessagePack.
 
     Parameters
     ----------
-    outfilename : str
-        Output filename without extension
-    file_parameters : str
-        File parameters used in compressed filename
-    result_dir : str
-        Path to directory with compressed files
-
+    archive_path : str
+        Full path to the 7z archive file
+        
     Returns
     -------
     dict
         Dictionary containing decompressed data or None if failed
     """
     try:
-        print("📦 Reading compressed data from 7z file")
-        archive_path = os.path.join(result_dir, f"{outfilename}{file_parameters}.7z")
+        print(" Reading compressed data from 7z file")
 
         with py7zr.SevenZipFile(archive_path, mode="r") as z:
             temp_dir = tempfile.mkdtemp()
@@ -1124,16 +1123,16 @@ def load_compressed_data(outfilename: str, file_parameters: str, result_dir: str
                         try:
                             raw = f.read()
                             data = msgpack.unpackb(raw, raw=False)
-                            print("✅ Data loaded and decoded from MessagePack inside 7z")
+                            print(" Data loaded and decoded from MessagePack inside 7z")
                             return data
                         except Exception as decode_err:
-                            print(f"❌ Failed to decode MessagePack: {decode_err}")
+                            print(f" Failed to decode MessagePack: {decode_err}")
                 else:
-                    print(f"⚠️ No files found in extracted archive in {temp_dir}")
+                    print(f" No files found in extracted archive in {temp_dir}")
             finally:
                 shutil.rmtree(temp_dir)
     except Exception as e:
-        print(f"❌ An error occurred while reading 7z file: {str(e)}")
+        print(f" An error occurred while reading 7z file: {str(e)}")
         return None
 
 
@@ -1243,9 +1242,8 @@ def main(file_path=None, output_dir=None):
             print(f"Warning: Using default accuracy: Acc={accuracy}")
             acc_value = accuracy
 
-        # Read compressed data from .7z file
-        # Note that we now use file_parameters from the configuration - we can also extract them from the file name
-        dcv_compress = load_compressed_data(outfilename, "", result_dir)
+        # Read compressed data from .7z file - use the actual file path provided by the user
+        dcv_compress = load_compressed_data(file_path)
         if dcv_compress is None:
             print("Error: Failed to read data from archive.")
             return
@@ -1313,9 +1311,12 @@ def main(file_path=None, output_dir=None):
 
         image = DummyImage(img_x, img_y, transform, rasterCrs, outfilename)
 
+        # Get the directory where the input 7z file is located
+        input_file_dir = os.path.dirname(os.path.abspath(file_path))
+        
         # Decompression
         final_matrix = decompress_image(
-            dcv_compress, image, transform, rasterCrs, padded_shape
+            dcv_compress, image, transform, rasterCrs, padded_shape, input_file_dir
         )
 
         print("Decompression completed")
