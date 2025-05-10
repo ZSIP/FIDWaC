@@ -346,6 +346,16 @@ distance = distance.astype(float)
 value_data[m] = np.nan
 distance[m] = np.nan
 
+# Handle zero distances with half of minimum non-zero distance approach
+zero_mask = distance == 0
+if np.any(zero_mask):
+    # Create a masked array where zeros are masked
+    masked_distance = np.ma.array(distance, mask=zero_mask)
+    # Find minimum non-zero distance for each point
+    min_distances = np.ma.min(masked_distance, axis=1)
+    # Replace zeros with half of the minimum non-zero distance
+    distance = distance + zero_mask * (min_distances.data[:, np.newaxis] / 2)
+
 end = time.time()
 print(f'Time elapsed: {end - start:.2f} seconds')
 
