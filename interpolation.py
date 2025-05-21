@@ -108,6 +108,8 @@ with open(r'./interpolation/config.json', 'r') as file:
 # Extract configuration parameters
 results_directory = config_data.get("results_directory")
 z_field_name = config_data.get("z_field_name")
+r_min_function = config_data.get("r_min_function")
+r_min = config_data.get("r_min")
 filter_las = config_data.get("filter_las")
 filter_classes = config_data.get("filter_classes")
 smooth_result = config_data.get("smooth_result")
@@ -320,10 +322,22 @@ distance, index = tree.query(data2[:,:2],
 end = time.time()
 print(f'Time elapsed: {end - start:.2f} seconds')
 
-print('Adjusting zero distances...')
-# Replace zero distances with half of minimum non-zero distance per row
-min_value_greater_than_zero = np.min(np.where(distance > 0, distance, np.max(distance)), axis=1)
-distance = np.where(distance == 0, min_value_greater_than_zero[:, np.newaxis] / 2, distance)
+# reduce distances function
+def min_distance_reduce(distance, r_min):
+    valid_mask = distance > r_min
+    row_mins = np.where(valid_mask, distance, np.inf)
+    row_min_values = np.min(row_mins, axis=1)
+    has_valid = row_min_values != np.inf
+    distance_out = distance.copy()
+    mask_to_replace = (distance < r_min) & has_valid[:, None]
+    
+    replacement_values = np.broadcast_to((row_min_values / 2)[:, None], distance.shape)
+    distance_out[mask_to_replace] = replacement_values[mask_to_replace]
+    return distance_out
+
+if r_min_function:
+    print("Reduce distances...")
+    distance = min_distance_reduce(distance, r_min)
 
 # Create mask for points beyond max_distance
 m = np.array(distance == np.inf)
