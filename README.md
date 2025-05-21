@@ -429,7 +429,7 @@ FIDWaC uses JSON configuration files to manage processing parameters, allowing e
 
 Click the link below to download the data:
 
-[SAMPLE_DATA](https://zutedupl-my.sharepoint.com/:f:/g/personal/alysko_zut_edu_pl/Et_gh1jMHc1FpyUV54IvqbIBSMft-kS_2VjHdPQXj-GtOg?e=8sZVvT))
+[SAMPLE DATA](https://zenodo.org/records/15462315))
 
 #### Using interpolation.py
 
