@@ -80,6 +80,11 @@ Script for advanced spatial data interpolation using IDW method and KDTree optim
 - Multi-format export functionality
 - Multi-threaded KDTree queries with `workers=-1` parameter
 
+New in branch qkq74-patch-1-reduce_min_distance:
+- Optional reduce distance function (please note that not all data may be interpolated correctly). This function is designed to reduce the weight of points that are too close to   each other. Two parameters have been added to the configuration:
+   r_min - the minimum distance to be reduced
+   r_min_function - activates the function
+
 **Core Functions**:
 ```python
 def calculate_idw(distance: np.ndarray) -> np.ndarray:
