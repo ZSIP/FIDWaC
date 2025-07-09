@@ -594,17 +594,17 @@ def interpolate_zeros(
 # Function to process a single block - will be used in multi-threaded processing
 def process_block_batch(batch_data):
     """
-    Przetwarza pakiet bloków obrazu.
+    Process a batch of image blocks.
 
     Parameters:
     ----------
     batch_data : tuple
-        Tuple zawierające (batch_idx, lista_bloków)
+        A tuple containing (batch_idx, list_of_blocks)
 
     Returns:
     -------
     list
-        Lista wyników dla każdego bloku w formacie (idx, compressed_data, max_error)
+        List of results for each block in the format (idx, compressed_data, max_error)
     """
     batch_idx, blocks_to_process = batch_data
     batch_results = []
