@@ -592,6 +592,31 @@ def interpolate_zeros(
 
 
 # Function to process a single block - will be used in multi-threaded processing
+def process_block_batch(batch_data):
+    """
+    Przetwarza pakiet bloków obrazu.
+
+    Parameters:
+    ----------
+    batch_data : tuple
+        Tuple zawierające (batch_idx, lista_bloków)
+
+    Returns:
+    -------
+    list
+        Lista wyników dla każdego bloku w formacie (idx, compressed_data, max_error)
+    """
+    batch_idx, blocks_to_process = batch_data
+    batch_results = []
+    
+    for block in blocks_to_process:
+        # Przetwórz pojedynczy blok N×N używając funkcji process_block
+        result = process_block(block)
+        batch_results.append(result)
+    
+    return batch_results
+
+
 def process_block(
     block_data: Tuple[int, np.ndarray, Optional[float]],
 ) -> Tuple[int, List, float]:
@@ -777,27 +802,55 @@ def compress_image(file_path, num_processes=None):
 
     print(f"Compressing data ({len(blocks)} blocks)")
 
+    # Ustal liczbę bloków N×N w obrazie
+    total_blocks = len(blocks)
+    
+    # Ustal optymalną liczbę bloków na proces
+    if num_processes is None:
+        num_processes = multiprocessing.cpu_count()
+    
+    # Im więcej procesów, tym więcej bloków na proces, żeby zminimalizować narzut
+    blocks_per_process = max(10, total_blocks // (num_processes * 2))
+    
+    print(f"Kompresowanie {total_blocks} bloków z użyciem {num_processes} procesów")
+    print(f"Około {blocks_per_process} bloków na proces")
+    
+    # Tworzenie pakietów bloków
+    block_batches = []
+    current_batch = []
+    batch_idx = 0
+    
+    for i, block in enumerate(blocks):
+        current_batch.append(block)
+        
+        # Gdy osiągniemy docelową liczbę bloków w pakiecie lub dotrzemy do końca
+        if len(current_batch) >= blocks_per_process or i == total_blocks - 1:
+            block_batches.append((batch_idx, current_batch))
+            current_batch = []
+            batch_idx += 1
+    
+    # Przetwarzanie pakietów używając zdefiniowanej globalnie funkcji
+    
     # Initialize results in blocks
-    results_buffer = [None] * len(blocks)
+    results_buffer = [None] * total_blocks
     # Track maximum error
     max_error_global = 0.0
 
-    # Set the number of processes for threads
-    if num_processes is None:
-        num_processes = multiprocessing.cpu_count()
-
     # Initialize process pool
     with multiprocessing.Pool(processes=num_processes) as pool:
-        # Use imap_unordered for better performance
-        for result in tqdm(
-            pool.imap_unordered(process_block, blocks), total=len(blocks)
+        # Use imap_unordered for better performance with batches
+        for batch_results in tqdm(
+            pool.imap_unordered(process_block_batch, block_batches), 
+            total=len(block_batches),
+            desc="Kompresja pakietów bloków"
         ):
-            idx, compressed_data, max_error = result
-            results_buffer[idx] = compressed_data  # Store only the compressed data
-
-            # Update max error
-            if max_error > max_error_global:
-                max_error_global = max_error
+            # Rozpakuj wyniki z pakietu
+            for idx, compressed_data, max_error in batch_results:
+                results_buffer[idx] = compressed_data
+                
+                # Update max error
+                if max_error > max_error_global:
+                    max_error_global = max_error
     if max_error_global >= accuracy:
         print(f"Compression failed. Maximum error higher than accuracy: {max_error_global:.6f} > {accuracy:.6f}")
         valid='F'
@@ -1136,7 +1189,7 @@ def load_compressed_data(archive_path: str) -> dict:
         return None
 
 
-def main(file_path=None, output_dir=None):
+def main(file_path=None, output_dir=None, num_processes=None):
     """
     Main function performing image compression and decompression.
     If a file with a .7z extension is provided as an argument, decompression is performed,
@@ -1148,6 +1201,8 @@ def main(file_path=None, output_dir=None):
         Path to the input file. If not provided, uses the default value.
     output_dir : str, optional
         Path to the output directory. If not provided, uses the default value.
+    num_processes : int, optional
+        Number of processes to use for compression. If not provided, uses all available cores.
     """
     # Load configuration
     with open(r"./compression/config.json", "r") as file:
@@ -1303,7 +1358,7 @@ def main(file_path=None, output_dir=None):
     else:
         print(f"Compressing image: {file_path}")
         dcv_compress, image, transform, rasterCrs, padded_shape, max_error_global = compress_image(
-            file_path
+            file_path, num_processes=num_processes
         )
 
         print("Pocess completed")
