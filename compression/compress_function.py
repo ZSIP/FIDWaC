@@ -846,7 +846,7 @@ def compress_image(file_path, num_processes=None):
                 if max_error > max_error_global:
                     max_error_global = max_error
     if max_error_global >= accuracy:
-        print(f"Compression failed. Maximum error higher than accuracy: {max_error_global:.6f} > {accuracy:.6f}")
+        print(f"Compression failed. Maximum error higher than accuracy: {max_error_global:.6f} > {accuracy:.6f} \n Increase decimal in config.")
         valid='F'
     else:
         print(f"Compression completed. Maximum error: {max_error_global:.6f}")
