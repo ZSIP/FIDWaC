@@ -93,6 +93,29 @@ def idct2(a: np.ndarray) -> np.ndarray:
 
 
 # ===== ZIGZAG FUNCTIONS =====
+# create zigzag indeks
+zigzag_cache = {}
+def create_zigzag_indices(rows: int, cols: int):
+    """Tworzy tablicę indeksów dla zigzag"""
+    indices = np.zeros((rows * cols, 2), dtype=np.int32)
+    index = 0
+    for i in range(rows + cols - 1):
+        if i % 2 == 0:
+            start_row = min(i, rows - 1)
+            start_col = i - start_row
+            count = min(start_row + 1, cols - start_col)
+            for j in range(count):
+                indices[index] = [start_row - j, start_col + j]
+                index += 1
+        else:
+            start_col = min(i, cols - 1)
+            start_row = i - start_col
+            count = min(start_col + 1, rows - start_row)
+            for j in range(count):
+                indices[index] = [start_row + j, start_col - j]
+                index += 1
+    return indices
+
 def to_zigzag(matrix: np.ndarray) -> np.ndarray:
     """
     Converts a 2D matrix to a 1D vector using zig-zag scanning.
@@ -111,28 +134,17 @@ def to_zigzag(matrix: np.ndarray) -> np.ndarray:
     np.ndarray
         1D vector containing the matrix elements in zig-zag order
     """
-    matrix = np.array(matrix)
     rows, cols = matrix.shape
-    vector = np.empty(rows * cols, dtype=matrix.dtype)
-    index = 0
-    for i in range(rows + cols - 1):
-        if i % 2 == 0:
-            start_row = min(i, rows - 1)
-            start_col = i - start_row
-            count = min(start_row + 1, cols - start_col)
-            vector[index : index + count] = matrix[
-                start_row - np.arange(count), start_col + np.arange(count)
-            ]
-            index += count
-        else:
-            start_col = min(i, cols - 1)
-            start_row = i - start_col
-            count = min(start_col + 1, rows - start_row)
-            vector[index : index + count] = matrix[
-                start_row + np.arange(count), start_col - np.arange(count)
-            ]
-            index += count
-    return vector
+    cache_key = (rows, cols)
+    
+    if cache_key not in zigzag_cache:
+        zigzag_cache[cache_key] = create_zigzag_indices(rows, cols)
+    
+    indices = zigzag_cache[cache_key]
+    row_indices = indices[:, 0]
+    col_indices = indices[:, 1]
+    
+    return matrix[row_indices, col_indices]
 
 
 def from_zigzag(vector: np.ndarray, rows: int, cols: int) -> np.ndarray:
@@ -153,25 +165,24 @@ def from_zigzag(vector: np.ndarray, rows: int, cols: int) -> np.ndarray:
     np.ndarray
         2D matrix reconstructed from the vector
     """
-    matrix = np.zeros((rows, cols), dtype=np.float64)
-    index = 0
-    for i in range(rows + cols - 1):
-        if i % 2 == 0:
-            start_row = min(i, rows - 1)
-            start_col = i - start_row
-            count = min(start_row + 1, cols - start_col)
-            matrix[start_row - np.arange(count), start_col + np.arange(count)] = vector[
-                index : index + count
-            ]
-            index += count
-        else:
-            start_col = min(i, cols - 1)
-            start_row = i - start_col
-            count = min(start_col + 1, rows - start_row)
-            matrix[start_row + np.arange(count), start_col - np.arange(count)] = vector[
-                index : index + count
-            ]
-            index += count
+    cache_key = (rows, cols)
+    
+    if cache_key not in zigzag_cache:
+        # Jeśli indeksy zigzag nie są w pamięci podręcznej, stwórz je
+        zigzag_cache[cache_key] = create_zigzag_indices(rows, cols)
+    
+    # Pobierz indeksy z pamięci podręcznej
+    indices = zigzag_cache[cache_key]
+    row_indices = indices[:, 0]
+    col_indices = indices[:, 1]
+    
+    # Stwórz pustą macierz
+    matrix = np.zeros((rows, cols), dtype=vector.dtype)
+    
+    # Wypełnij macierz wartościami z wektora
+    for i in range(min(len(vector), len(row_indices))):
+        matrix[row_indices[i], col_indices[i]] = vector[i]
+    
     return matrix
 
 # ===== COMPRESSION ACCURACY CHECK FUNCTIONS =====
@@ -204,39 +215,32 @@ def check_precision_decompression_dct(
 
 
 # Inverse DCT function
+undct_cache = {}
 def undct(
     split: np.ndarray, org_dct_zigzag: np.ndarray, original_matrix: np.ndarray
 ) -> Tuple[np.ndarray, float, np.ndarray]:
-    """
-    Performs an inverse DCT based on a partial vector of coefficients.
-
-    The function reconstructs a matrix from a partial vector of DCT coefficients,
-    filling in the missing coefficients with zeros, and then checks the accuracy of the reconstruction.
-
-    Parameters:
-    ----------
-    split : np.ndarray
-        Partial vector of DCT coefficients (first n elements)
-    org_dct_zigzag : np.ndarray
-        Full original vector of DCT coefficients in zig-zag order
-    original_matrix : np.ndarray
-        Original matrix before compression
-
-    Returns:
-    -------
-    Tuple[np.ndarray, float, np.ndarray]
-        (partial_vector, max_error, reconstructed_matrix)
-    """
-    array = np.zeros(
-        len(org_dct_zigzag), dtype=np.float32
-    )  # Empty zero array with length of org_dct_zigzag
-    array[: len(split)] = split  # Adding split values to the empty array
-    reconstructed_matrix = np.array(from_zigzag(array, N, N))
+    rows, cols = original_matrix.shape
+    cache_key = (len(split), hash(split.tobytes()), hash(original_matrix.tobytes()))
+    
+    if cache_key in undct_cache:
+        return undct_cache[cache_key]
+    
+    array = np.zeros(len(org_dct_zigzag), dtype=np.float32)
+    array[:len(split)] = split
+    reconstructed_matrix = np.array(from_zigzag(array, rows, cols))
     idct_reconstructed = idct2(reconstructed_matrix)
     mean_value, max_value = check_precision_decompression_dct(
         original_matrix, idct_reconstructed
     )
-    return split, max_value, idct_reconstructed
+    
+    result = (split, max_value, idct_reconstructed)
+    undct_cache[cache_key] = result
+    
+    if len(undct_cache) > 500000:  # cache limit
+        undct_cache.pop(next(iter(undct_cache)))
+    return result
+
+
 
 
 # Function to refine the DCT array
@@ -802,19 +806,20 @@ def compress_image(file_path, num_processes=None):
 
     print(f"Compressing data ({len(blocks)} blocks)")
 
-    # total blocks in image
+    # Ustal liczbę bloków N×N w obrazie
     total_blocks = len(blocks)
     
-    # calculate blocks per process
+    # Ustal optymalną liczbę bloków na proces
     if num_processes is None:
         num_processes = multiprocessing.cpu_count()
-        
+    
+    # Im więcej procesów, tym więcej bloków na proces, żeby zminimalizować narzut
     blocks_per_process = max(10, total_blocks // (num_processes * 2))
     
-    print(f"Compression {total_blocks} blocks with {num_processes} process")
+    print(f"Kompresowanie {total_blocks} bloków z użyciem {num_processes} procesów")
     print(f"Około {blocks_per_process} bloków na proces")
     
-    # arrays
+    # Tworzenie pakietów bloków
     block_batches = []
     current_batch = []
     batch_idx = 0
@@ -822,10 +827,13 @@ def compress_image(file_path, num_processes=None):
     for i, block in enumerate(blocks):
         current_batch.append(block)
         
+        # Gdy osiągniemy docelową liczbę bloków w pakiecie lub dotrzemy do końca
         if len(current_batch) >= blocks_per_process or i == total_blocks - 1:
             block_batches.append((batch_idx, current_batch))
             current_batch = []
             batch_idx += 1
+    
+    # Przetwarzanie pakietów używając zdefiniowanej globalnie funkcji
     
     # Initialize results in blocks
     results_buffer = [None] * total_blocks
