@@ -415,6 +415,8 @@ FIDWaC uses JSON configuration files to manage processing parameters, allowing e
     "sourceCrs_force_declare": "epsg:2180"
 }
 ```
+**Recommendation:**  
+If the desired accuracy is not achieved, you should increase the value of the decimal parameter in the configuration file (`compression/config.json`). A higher decimal value allows for more precise adjustment to meet the accuracy requirement.
 
 **Key parameters**:
 - **results_directory**: Directory where compressed files will be saved
