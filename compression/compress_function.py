@@ -1018,7 +1018,7 @@ def decompress_image(dcv_compress, image, transform, rasterCrs, padded_shape, ou
     print("Reconstructing original matrix")
     pbar = tqdm(
         total=len(dcv_compress) - 16
-    )  # Counting from the first 15 elements with parameters
+    )  # Counting from the first 16 elements with parameters
     i = 16
 
     while i < len(dcv_compress):
