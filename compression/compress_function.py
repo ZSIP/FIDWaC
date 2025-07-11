@@ -175,7 +175,7 @@ def from_zigzag(vector: np.ndarray, rows: int, cols: int) -> np.ndarray:
     col_indices = indices[:, 1]
     
     # Create emty matrix
-    matrix = np.zeros((rows, cols), dtype=vector.dtype)
+    matrix = np.zeros((rows, cols), dtype=np.float64)
     
     for i in range(min(len(vector), len(row_indices))):
         matrix[row_indices[i], col_indices[i]] = vector[i]
