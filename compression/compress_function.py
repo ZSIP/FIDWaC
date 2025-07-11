@@ -806,20 +806,18 @@ def compress_image(file_path, num_processes=None):
 
     print(f"Compressing data ({len(blocks)} blocks)")
 
-    # Ustal liczbę bloków N×N w obrazie
+    # Count N×N blocks in image
     total_blocks = len(blocks)
     
-    # Ustal optymalną liczbę bloków na proces
+    # Count optimal processes number
     if num_processes is None:
         num_processes = multiprocessing.cpu_count()
     
-    # Im więcej procesów, tym więcej bloków na proces, żeby zminimalizować narzut
     blocks_per_process = max(10, total_blocks // (num_processes * 2))
     
-    print(f"Kompresowanie {total_blocks} bloków z użyciem {num_processes} procesów")
+    print(f"Compressing {total_blocks} blocks with {num_processes} processes")
     print(f"Około {blocks_per_process} bloków na proces")
     
-    # Tworzenie pakietów bloków
     block_batches = []
     current_batch = []
     batch_idx = 0
@@ -827,14 +825,11 @@ def compress_image(file_path, num_processes=None):
     for i, block in enumerate(blocks):
         current_batch.append(block)
         
-        # Gdy osiągniemy docelową liczbę bloków w pakiecie lub dotrzemy do końca
         if len(current_batch) >= blocks_per_process or i == total_blocks - 1:
             block_batches.append((batch_idx, current_batch))
             current_batch = []
-            batch_idx += 1
-    
-    # Przetwarzanie pakietów używając zdefiniowanej globalnie funkcji
-    
+            batch_idx += 1 
+  
     # Initialize results in blocks
     results_buffer = [None] * total_blocks
     # Track maximum error
