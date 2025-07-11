@@ -96,7 +96,6 @@ def idct2(a: np.ndarray) -> np.ndarray:
 # create zigzag indeks
 zigzag_cache = {}
 def create_zigzag_indices(rows: int, cols: int):
-    """Tworzy tablicę indeksów dla zigzag"""
     indices = np.zeros((rows * cols, 2), dtype=np.int32)
     index = 0
     for i in range(rows + cols - 1):
@@ -168,18 +167,16 @@ def from_zigzag(vector: np.ndarray, rows: int, cols: int) -> np.ndarray:
     cache_key = (rows, cols)
     
     if cache_key not in zigzag_cache:
-        # Jeśli indeksy zigzag nie są w pamięci podręcznej, stwórz je
         zigzag_cache[cache_key] = create_zigzag_indices(rows, cols)
     
-    # Pobierz indeksy z pamięci podręcznej
+    # Get indices from cach
     indices = zigzag_cache[cache_key]
     row_indices = indices[:, 0]
     col_indices = indices[:, 1]
     
-    # Stwórz pustą macierz
+    # Create emty matrix
     matrix = np.zeros((rows, cols), dtype=vector.dtype)
     
-    # Wypełnij macierz wartościami z wektora
     for i in range(min(len(vector), len(row_indices))):
         matrix[row_indices[i], col_indices[i]] = vector[i]
     
@@ -614,7 +611,6 @@ def process_block_batch(batch_data):
     batch_results = []
     
     for block in blocks_to_process:
-        # Przetwórz pojedynczy blok N×N używając funkcji process_block
         result = process_block(block)
         batch_results.append(result)
     
@@ -816,7 +812,7 @@ def compress_image(file_path, num_processes=None):
     blocks_per_process = max(10, total_blocks // (num_processes * 2))
     
     print(f"Compressing {total_blocks} blocks with {num_processes} processes")
-    print(f"Około {blocks_per_process} bloków na proces")
+    print(f"About {blocks_per_process} blocks per process")
     
     block_batches = []
     current_batch = []
@@ -841,9 +837,8 @@ def compress_image(file_path, num_processes=None):
         for batch_results in tqdm(
             pool.imap_unordered(process_block_batch, block_batches), 
             total=len(block_batches),
-            desc="Kompresja pakietów bloków"
+            desc="Compressing batches of blocks"
         ):
-            # Rozpakuj wyniki z pakietu
             for idx, compressed_data, max_error in batch_results:
                 results_buffer[idx] = compressed_data
                 
@@ -1360,4 +1355,4 @@ def main(file_path=None, output_dir=None, num_processes=None):
             file_path, num_processes=num_processes
         )
 
-        print("Pocess completed")
+        print("Process completed")
