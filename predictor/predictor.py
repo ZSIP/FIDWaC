@@ -101,11 +101,16 @@ def _nb_extract_features_batch(dct_zigzags: np.ndarray) -> tuple:
     return ac_abs_mean, zero_ratio
 
 
+# Compile the serial kernel at import. The parallel batch kernel is not launched here: the first launch
+# fixes numba's threading layer, which compress_image chooses from the backend (_select_threading_layer).
 _dz = np.zeros(64, dtype=np.float64)
 _nb_extract_features(_dz, 8)
-_dz_batch = np.zeros((1, 64), dtype=np.float64)
-_nb_extract_features_batch(_dz_batch)
-del _dz, _dz_batch
+del _dz
+
+
+def warm_up_parallel_kernels() -> None:
+    """Load the parallel batch kernel in the parent so that forked pool workers inherit it."""
+    _nb_extract_features_batch(np.zeros((1, 64), dtype=np.float64))
 
 
 

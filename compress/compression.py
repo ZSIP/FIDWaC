@@ -74,6 +74,23 @@ def find_raster_files(directory: str, recursive: bool = True) -> List[str]:
 
 
 
+def _select_threading_layer(config: Config) -> None:
+    """Use numba's fork-safe workqueue layer for the heuristic backend, then warm up the kernels.
+
+    The default GNU OpenMP layer aborts forked pool workers that run a parallel kernel after the
+    parent has run one ("fork() called from a process already using GNU OpenMP"), and the pool then
+    waits forever. The advanced heuristic does exactly that. The layer can only be chosen before the
+    first parallel launch, so the warm-up that follows fixes it; the binary backend keeps numba's default.
+    """
+    if str(config.model.backend).lower() == "heuristic":
+        import numba
+
+        numba.config.THREADING_LAYER = "workqueue"
+    from predictor.predictor import warm_up_parallel_kernels
+
+    warm_up_parallel_kernels()
+
+
 def compress_image(
     file_path: str,
     config: Optional[Config] = None,
@@ -105,6 +122,7 @@ def compress_image(
 
     os.makedirs(output_dir, exist_ok=True)
     start_time = time.time()
+    _select_threading_layer(config)
 
     if not config.output.quiet:
         print(f"Loading: {file_path}")
@@ -420,6 +438,7 @@ def _compress_per_channel(
     rgb_indices = getattr(config.compression, "rgb_channel_indices", [])
     if (
         u8_accuracy_mode
+        and not config.compression.lossless
         and len(rgb_indices) == 3
         and ycbcr_per_block_mode
         and all_uint8
@@ -918,7 +937,9 @@ def _build_dct_output_path(
     )
     bs_label = str(unique_bs[0]) if len(unique_bs) == 1 else "-".join(str(n) for n in unique_bs)
 
-    if u8_accuracy_mode and all_uint8:
+    if config.compression.lossless and all_uint8:
+        acc_str = "Lossless"
+    elif u8_accuracy_mode and all_uint8:
         u8sf = getattr(config.compression, "uint8_scaling_factor", 10)
         if isinstance(u8sf, list):
             u8sf_str = "-".join(str(x) for x in u8sf)
@@ -958,7 +979,10 @@ def _print_dct_stats(
     print(f"  Original: {original_size / 1024:.1f} KB")
     print(f"  Compressed: {compressed_size / 1024:.1f} KB")
     print(f"  Ratio: {ratio:.2f}x")
-    if u8_accuracy_mode and all_uint8:
+    if config.compression.lossless and all_uint8:
+        print("  Accuracy: lossless (max error = 0)")
+        print(f"  Max error: {max_error_global:.1f}")
+    elif u8_accuracy_mode and all_uint8:
         u8_acc = config.compression.uint8_accuracy
         u8_sf = getattr(config.compression, "uint8_scaling_factor", 10)
         if isinstance(u8_sf, list):

@@ -538,9 +538,7 @@ def _decompress_single_channel(
         filtered = np.frombuffer(decompressed, dtype=np.uint8).reshape(H, W)
         if filter_used:
             # Inverse Sub filter: original[i] = filtered[i] + original[i-1]
-            result = filtered.copy()
-            result[:, 1:] = filtered[:, 1:] + result[:, :-1]
-            result[:, 0] = filtered[:, 0]
+            result = np.cumsum(filtered, axis=1, dtype=np.uint8)
         else:
             result = filtered
         return result.astype(np.float32)
