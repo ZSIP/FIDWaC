@@ -99,33 +99,50 @@ def _encode_band(raw, eps, meta):
     return payload, max_err, ratio
 
 
-def compress_sz3(src_path, out_path, eps, quiet=False, crs=""):
-    """Encode every band with the SZ3 absolute error bound into out_path. Returns the largest maximum error."""
+def compress_sz3(src_path, out_path, eps, quiet=False, crs="", eps_int=None):
+    """Encode every band with the SZ3 absolute error bound into out_path.
+
+    Integer bands use eps_int when given (the uint8 accuracy bound in DN), float bands use eps.
+    Returns (max_err, valid): max_err is the largest measured error over all bands; valid is
+    True when every band's error stays within its own bound.
+    """
     with rasterio.open(src_path) as src:
         out_crs = resolve_output_crs(src.crs, crs)
-        meta = {
-            "nodata": src.nodata,
-            "dtype": src.dtypes[0],
-            "crs_wkt": None if out_crs is None else out_crs.to_wkt(),
-            "transform": list(src.transform)[:6],
-        }
-        payloads, max_err = [], 0.0
+        payloads, max_err, valid = [], 0.0, True
         for band in range(1, src.count + 1):
-            payload, err, ratio = _encode_band(src.read(band).astype(np.float64), eps, meta)
+            band_dtype = src.dtypes[band - 1]
+            band_eps = (
+                eps_int
+                if (eps_int is not None and np.dtype(band_dtype).kind in "iu")
+                else eps
+            )
+            meta = {
+                "nodata": src.nodata,
+                "dtype": band_dtype,
+                "crs_wkt": None if out_crs is None else out_crs.to_wkt(),
+                "transform": list(src.transform)[:6],
+            }
+            payload, err, ratio = _encode_band(src.read(band).astype(np.float64), band_eps, meta)
             payloads.append(payload)
             max_err = max(max_err, err)
+            valid = valid and err <= band_eps
             if not quiet:
                 print(
-                    f"  cm=8 band {band}/{src.count} ratio={ratio:.2f} max_err={err:.5f} "
-                    f"payload={len(payload)/1e6:.2f} MB"
+                    f"  cm=8 band {band}/{src.count} eps={band_eps:g} ratio={ratio:.2f} "
+                    f"max_err={err:.5f} payload={len(payload)/1e6:.2f} MB"
                 )
     with open(out_path, "wb") as f:
         f.write(pack_bands(payloads))
-    return max_err
+    return max_err, valid
 
 
-def compress_sz3_archive(src_path, out_path, eps, quiet=False, crs=""):
-    """Write a cm=8 payload and optionally wrap it in a .7z archive."""
+def compress_sz3_archive(src_path, out_path, eps, quiet=False, crs="", eps_int=None):
+    """Write a cm=8 payload and optionally wrap it in a .7z archive.
+
+    Returns a tuple (result_path, max_error, valid), where result_path is the final
+    compressed artifact (.sz3 or .7z), max_error is the measured error over
+    valid pixels and valid is True when every band meets its bound.
+    """
     out_path = os.fspath(out_path)
     lower = out_path.lower()
     if lower.endswith(".7z"):
@@ -137,17 +154,17 @@ def compress_sz3_archive(src_path, out_path, eps, quiet=False, crs=""):
         base_dir = os.path.dirname(os.path.abspath(out_path)) or "."
         with tempfile.TemporaryDirectory(dir=base_dir) as tmp_dir:
             payload = os.path.join(tmp_dir, f"{stem}.sz3")
-            max_err = compress_sz3(src_path, payload, eps, quiet=quiet, crs=crs)
+            max_err, valid = compress_sz3(src_path, payload, eps, quiet=quiet, crs=crs, eps_int=eps_int)
             pack_to_7z(out_path, payload, store=False, method="LZMA2")
-        return out_path, max_err
+        return out_path, max_err, valid
 
     if lower.endswith(".sz3"):
-        max_err = compress_sz3(src_path, out_path, eps, quiet=quiet, crs=crs)
-        return out_path, max_err
+        max_err, valid = compress_sz3(src_path, out_path, eps, quiet=quiet, crs=crs, eps_int=eps_int)
+        return out_path, max_err, valid
 
     out_file = os.path.splitext(out_path)[0] + ".sz3"
-    max_err = compress_sz3(src_path, out_file, eps, quiet=quiet, crs=crs)
-    return out_file, max_err
+    max_err, valid = compress_sz3(src_path, out_file, eps, quiet=quiet, crs=crs, eps_int=eps_int)
+    return out_file, max_err, valid
 
 
 def _parse_band(payload):

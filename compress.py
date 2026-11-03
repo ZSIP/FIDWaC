@@ -510,15 +510,21 @@ def main():
         elif output_is_archive and method == "sz3":
             from compress.compression_sz3 import compress_sz3_archive
 
+            eps_int = (
+                config.compression.uint8_accuracy
+                if config.compression.uint8_accuracy_mode
+                else None
+            )
             if output_path.lower().endswith(".7z"):
-                result_path, max_err = compress_sz3_archive(
+                result_path, max_err, valid = compress_sz3_archive(
                     input_path,
                     output_path,
                     config.compression.accuracy,
                     quiet=config.output.quiet,
                     crs=config.compression.crs,
+                    eps_int=eps_int,
                 )
-                tag = "VT" if max_err <= config.compression.accuracy else "VF"
+                tag = "VT" if valid else "VF"
                 print(f"VALIDITY:{tag}", flush=True)
             else:
                 base = os.path.splitext(os.path.basename(input_path))[0]
@@ -526,14 +532,15 @@ def main():
                     out_dir_for_func,
                     f"{base}_SZ3_eps{config.compression.accuracy}.7z",
                 )
-                result_path, max_err = compress_sz3_archive(
+                result_path, max_err, valid = compress_sz3_archive(
                     input_path,
                     result_path,
                     config.compression.accuracy,
                     quiet=config.output.quiet,
                     crs=config.compression.crs,
+                    eps_int=eps_int,
                 )
-                tag = "VT" if max_err <= config.compression.accuracy else "VF"
+                tag = "VT" if valid else "VF"
                 result_path = _tag_output(result_path, tag)
                 print(f"VALIDITY:{tag}", flush=True)
         elif output_is_archive:
