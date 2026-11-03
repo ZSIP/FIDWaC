@@ -9,9 +9,6 @@ from typing import List, Union
 import numpy as np
 import numba as nb
 
-# =============================================================================
-# Numba JIT helpers
-# =============================================================================
 
 
 @nb.njit(cache=True)
@@ -72,7 +69,6 @@ def _nb_decode_vlq(data: np.ndarray, n: int, out: np.ndarray) -> int:
     return count
 
 
-# Warm up the JIT-compiled functions at import time
 _dummy_u = np.zeros(1, dtype=np.uint64)
 _dummy_buf = np.zeros(5, dtype=np.uint8)
 _nb_encode_vlq(_dummy_u, _dummy_buf)
@@ -83,10 +79,6 @@ _dummy_out = np.zeros(1, dtype=np.uint64)
 _nb_decode_vlq(_dummy_data, 1, _dummy_out)
 del _dummy_u, _dummy_buf, _dummy_i64, _dummy_data, _dummy_out
 
-
-# =============================================================================
-# VLQ encode / decode
-# =============================================================================
 
 
 def encode_vlq(values: List[int]) -> bytes:
@@ -117,10 +109,6 @@ def decode_vlq(data: Union[bytes, bytearray, memoryview]) -> List[int]:
     """Decode bytes → signed int list via VLQ + ZigZag."""
     return decode_vlq_array(data).tolist()
 
-
-# =============================================================================
-# DC Median3 Predictor + separate DC/AC streams (cm=3)
-# =============================================================================
 
 
 @nb.njit(cache=True)
@@ -277,7 +265,6 @@ def _nb_dc_median_ac_decode(
     return coeff_pos
 
 
-# Warm up the JIT-compiled functions
 _dummy_len = np.array([1], dtype=np.int64)
 _dummy_c = np.array([42], dtype=np.int64)
 _dummy_dc_buf = np.zeros(5, dtype=np.uint8)
@@ -345,5 +332,3 @@ def dc_median_ac_decode(
     _nb_dc_median_ac_decode(dc_deltas, ac_values, lengths_arr, blocks_per_row, out_coeffs)
     return out_coeffs[:total_coeffs]
 
-
-# =============================================================================

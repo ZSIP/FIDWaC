@@ -20,8 +20,6 @@ def integer_range(src_dtype: Optional[str]) -> Optional[Tuple[float, float, floa
     return INTEGER_RANGES.get(str(src_dtype)) if src_dtype is not None else None
 
 
-# RLE ENCODING / DECODING FOR MASKS
-
 
 def encode_mask_rle(mask: np.ndarray) -> List[int]:
     """Encode binary mask as RLE: [start1, length1, start2, length2, ...]."""

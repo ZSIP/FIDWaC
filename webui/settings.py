@@ -298,8 +298,6 @@ def decompress_args(archive_path: str, output_dir: str) -> List[str]:
     return ["-i", archive_path, "-o", output_dir, "--quiet"]
 
 
-# ---------------------------------------------------------------- test suite
-
 def fidwac_python() -> str:
     """Python for test runs: the installer venv when present, else this interpreter."""
     p = os.path.expanduser("~/.fidwac/venv/bin/python3")

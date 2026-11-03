@@ -13,20 +13,16 @@ from predictor.predictor import get_predictor, HeuristicPredictor, AdvancedHeuri
 
 __version__ = "2.0.0"
 __all__ = [
-    # Core
     "dct2",
     "idct2",
     "to_zigzag",
     "from_zigzag",
-    # Compression/Decompression
     "compress_image",
     "decompress_image",
     "decompress_file",
     "load_compressed_data",
-    # Config
     "load_config",
     "Config",
-    # Predictor
     "get_predictor",
     "HeuristicPredictor",
     "AdvancedHeuristicPredictor",

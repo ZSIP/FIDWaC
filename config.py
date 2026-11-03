@@ -415,7 +415,6 @@ def save_config(config: Config, config_path: str) -> None:
         "interpolation": asdict(config.interpolation),
     }
 
-    # Preserve _descriptions section if it exists in original file
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:

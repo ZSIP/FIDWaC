@@ -35,11 +35,9 @@ def load_compressed_data(file_path: str) -> Dict[str, Any]:
     import tempfile
     import subprocess
 
-    # Create temp directory
     temp_dir = tempfile.mkdtemp()
 
     try:
-        # Use system 7zz/7zip/7z or fallback to py7zr
         if shutil.which("7zz"):
             cmd = "7zz"
         elif shutil.which("7zip"):
@@ -130,7 +128,6 @@ def load_compressed_data(file_path: str) -> Dict[str, Any]:
         return msgpack.unpackb(msgpack_data, raw=False, strict_map_key=False)
 
     finally:
-        # Remove temp directory
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -453,7 +450,6 @@ def _decode_dct_channel_rgb(
         encoded = encoded_map[ch]
         coeffs, plane = decoded[ch]
 
-        # Reconstruct channel
         result = np.zeros((padded_H, padded_W), dtype=np.float64)
         coeff_pos = 0
 
@@ -494,7 +490,6 @@ def _decode_dct_channel_rgb(
 
         channels[ch] = result
 
-    # Apply inverse YCbCr transform
     Y = channels["Y"]
     Cb = channels["Cb"]
     Cr = channels["Cr"]
@@ -526,9 +521,7 @@ def _decompress_single_channel(
     lengths = ch_data.get("l", [])
     cm = ch_data.get("cm", 0)
     raw_c = ch_data.get("c", [])
-    # Use per-channel scaling_factor if stored, otherwise fall back to global
     scaling_factor = ch_data.get("sf", scaling_factor)
-    # Use per-channel block_size if available, otherwise fall back to global
     block_size = ch_data.get("bs", block_size)
 
     H, W = original_shape
@@ -538,7 +531,6 @@ def _decompress_single_channel(
     blocks_per_row = padded_W // block_size
 
     if cm == 4 and isinstance(raw_c, (bytes, bytearray)):
-        # Lossless PNG mode: zlib decompress + inverse filter (if used)
         import zlib
 
         filter_used = ch_data.get("f", False)
@@ -550,7 +542,6 @@ def _decompress_single_channel(
             result[:, 1:] = filtered[:, 1:] + result[:, :-1]
             result[:, 0] = filtered[:, 0]
         else:
-            # No filter applied
             result = filtered
         return result.astype(np.float32)
     if cm == 5:
@@ -562,7 +553,6 @@ def _decompress_single_channel(
         else:
             coeffs = []
     elif cm == 3 and isinstance(raw_c, list) and len(raw_c) == 2:
-        # separate DC/AC streams with DC median prediction
         dc_data, ac_data = raw_c
         coeffs_arr = dc_median_ac_decode(dc_data, ac_data, lengths, blocks_per_row)
         coeffs = coeffs_arr.tolist()
@@ -574,7 +564,6 @@ def _decompress_single_channel(
     masks_data = ch_data.get("m", [])
     masks_dict = {item[0]: item[1] for item in masks_data}
 
-    # Set result dtype based on compression mode
     int_dtype = ch_data.get("dt", "uint8") if cm == 5 else None
     result_dtype = np.dtype(int_dtype) if cm == 5 else (np.uint8 if cm == 4 else np.float32)
     lengths_np = np.asarray(lengths, dtype=np.int64)
@@ -652,9 +641,7 @@ def _decompress_single_channel_streaming(
     lengths = ch_data.get("l", [])
     cm = ch_data.get("cm", 0)
     raw_c = ch_data.get("c", [])
-    # Use per-channel scaling_factor if stored, otherwise fall back to global
     scaling_factor = ch_data.get("sf", scaling_factor)
-    # Use per-channel block_size if available, otherwise fall back to global
     block_size = ch_data.get("bs", block_size)
 
     H, W = original_shape
@@ -672,7 +659,6 @@ def _decompress_single_channel_streaming(
         else:
             coeffs = []
     elif cm == 3 and isinstance(raw_c, list) and len(raw_c) == 2:
-        # separate DC/AC streams with DC median prediction
         dc_data, ac_data = raw_c
         coeffs_arr = dc_median_ac_decode(dc_data, ac_data, lengths, blocks_per_row)
         coeffs = coeffs_arr
@@ -684,7 +670,6 @@ def _decompress_single_channel_streaming(
     masks_data = ch_data.get("m", [])
     masks_dict = {item[0]: item[1] for item in masks_data}
 
-    # Set block dtype based on compression mode
     int_dtype = ch_data.get("dt", "uint8") if cm == 5 else None
     block_dtype = np.dtype(int_dtype) if cm == 5 else (np.uint8 if cm == 4 else np.float32)
 
@@ -719,7 +704,6 @@ def _decompress_single_channel_streaming(
         y = brow * block_size
         x = bcol * block_size
 
-        # Skip blocks outside original image bounds (padding-only)
         if y >= H or x >= W:
             coeff_pos += max(0, length)
             continue
@@ -760,7 +744,6 @@ def _decompress_single_channel_streaming(
                 nodata_guard=nodata_guard,
             )
 
-        # Clip to original image bounds
         write_h = min(block_size, H - y)
         write_w = min(block_size, W - x)
         if write_h <= 0 or write_w <= 0:
@@ -785,7 +768,6 @@ def decompress_image(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Get metadata
     if "n" in dcv_compress:
         # flat format
         block_size = dcv_compress.get("n", config.compression.block_size)
@@ -837,7 +819,6 @@ def decompress_image(
             f"  Decompressing: {W}x{H}, channels={num_channels}, block_size={block_size}, Mode: {mode_str}"
         )
 
-    # Prepare the transform
     if len(transform_list) >= 6:
         transform = Affine(
             transform_list[0],
@@ -853,7 +834,6 @@ def decompress_image(
     # CRS chosen at compression time (input CRS, config CRS or none); None = GeoTIFF without CRS
     crs = crs_from_header(crs_str)
 
-    # Write the output GeoTIFF
     if output_filename is None:
         output_filename = "decompressed.tif"
 
@@ -863,7 +843,6 @@ def decompress_image(
     if tiff_compress not in ("DEFLATE", "LZW", "LZMA", "ZSTD", "NONE"):
         tiff_compress = "DEFLATE"
 
-    # Detect uint8 accuracy mode (cm=5, cm=4, or cm=6) to set correct output dtype
     is_uint8_mode = False
     if is_flat_format:
         if num_channels == 1:
@@ -872,7 +851,6 @@ def decompress_image(
         else:
             channel_list = dcv_compress.get("channels", [])
             if channel_list:
-                # Check if all channels have cm=5, cm=4, or cm=6 (per-block RGB)
                 is_uint8_mode = all(ch.get("cm", 0) in (5, 4, 6) for ch in channel_list)
 
     out_dtype = np.uint8 if is_uint8_mode else np.float32
@@ -910,7 +888,6 @@ def decompress_image(
         blockysize=256,
     ) as dst:
         if use_streaming and is_flat_format:
-            # Streaming mode: write blocks directly to GeoTIFF
             if num_channels == 1:
                 ch_data = {
                     "l": dcv_compress.get("l", []),
@@ -965,14 +942,11 @@ def decompress_image(
                     )
                     band += 1
         else:
-            # In-memory mode: decompress to arrays, then write
             channels = []
 
-            # Check for per-block RGB mode (cm=6)
             if is_flat_format and num_channels == 3:
                 channel_list = dcv_compress.get("channels", [])
                 if channel_list and channel_list[0].get("cm") == 6:
-                    # Per-block RGB mode
                     ch_data = channel_list[0]
                     rgb_channels = _decode_dct_channel_rgb(
                         ch_data, *_rgb_geometry(ch_data, block_size, (H, W))
@@ -981,7 +955,6 @@ def decompress_image(
                     _restore_rgb_nodata(*rgb_planes, ch_data, output_nodata)
                     channels.extend(rgb_planes)
                 else:
-                    # Standard multi-channel
                     for ch_idx, ch_data in enumerate(channel_list):
                         ch_result = _decompress_single_channel(
                             ch_data,
@@ -1017,7 +990,6 @@ def decompress_image(
                 for ch_idx, ch_data in enumerate(channel_list):
                     if ch_data.get("cm") == 6:
                         if not rgb_decoded and "c" in ch_data:
-                            # First cm=6 entry with data: decode all RGB channels
                             if not config.output.quiet:
                                 print(f"  Channel {ch_idx + 1}/{num_channels} (RGB per-block):")
                             rgb_channels = _decode_dct_channel_rgb(
@@ -1230,12 +1202,10 @@ def decompress_file(
         t = meta["transform"]
         crs = crs_from_header(crs_str)
 
-        # Reconstruct nodata mask
         nodata_mask = None
         if nodata_rle:
             nodata_mask = decode_mask_rle(nodata_rle, (H, W))
 
-        # Split rgb_bin into strips
         strips = []
         pos = 0
         for sz in strip_sizes:
@@ -1252,7 +1222,6 @@ def decompress_file(
 
         tj = open_turbojpeg()
 
-        # Decode all strips into full RAM array, then write GeoTIFF in one shot
         if not config.output.quiet:
             print(f"  Allocating {H*W*num_bands/1024/1024:.0f} MB RAM...")
         full_img = np.empty((H, W, num_bands), dtype=np.uint8)
@@ -1278,7 +1247,6 @@ def decompress_file(
             pbar.close()
         del strips
 
-        # Apply nodata mask to full image
         if nodata_mask is not None:
             fill = int(src_nodata) if src_nodata is not None and 0 <= src_nodata <= 255 else 0
             full_img[nodata_mask] = fill
@@ -1315,10 +1283,6 @@ def decompress_file(
     output_filename = f"{base_name}.tif"
     return decompress_image(dcv_compress, config, output_dir, output_filename)
 
-
-# =============================================================================
-# EXPORT
-# =============================================================================
 
 __all__ = [
     "load_compressed_data",

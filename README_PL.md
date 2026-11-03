@@ -1158,10 +1158,10 @@ FIDWAC v2 wprowadza następujące usprawnienia względem FIDWaC v1:
 | 23 | **Tryb uint8 accuracy (`cm=5`)** | Brak dedykowanej ścieżki accuracy dla pojedynczych kanałów 8-bitowych. | Gwarancja maksymalnego błędu w wartościach 0-255, centering -128 i adaptacyjny `scaling_factor`. |
 | 24 | **Tryb lossless PNG (`cm=4`)** | Brak dedykowanego trybu bezstratnego uint8. | PNG Sub filter + zlib, `max error = 0`. |
 | 25 | **Per-block RGB YCbCr (`cm=6`)** | Brak ścieżki RGB z gwarancją błędu. | Domyślna ścieżka RGB accuracy: kaskadowe mnożniki, walidacja w RGB i zaawansowane upakowanie strumieni. |
-| 27 | **Weryfikacja RGB dekoderem (`ycbcr_decode_verify`)** | Tylko szybka kontrola po stronie kodera. | Ostateczny kandydat `cm=6` jest sprawdzany dokładnym torem dekodera: IDCT + `clip(+128)` + `ycbcr_to_rgb` (`_rgb_error_via_decoder`). |
-| 28 | **Wsadowe dekodowanie płaszczyzn `cm=6`** | Pętla IDCT blok po bloku przy dekompresji. | `_reconstruct_plane_batched` liczy `scipy.fft.idct` na paczkach bloków. |
-| 29 | **Tryby predykcyjny (`cm=7`) i SZ3 (`cm=8`)** | Tylko DCT. | Opcjonalne `--method pred` (`.fpred`, MED + kwantyzacja skalarna) i `--method sz3` (`.sz3`, zewnętrzny SZ3) z pełną integracją `.7z` i metadanych GeoTIFF. |
-| 30 | **Interpolacja IDW** | `interpolation.py` z silnikiem NumPy/numexpr albo Dask; komórki z mniej niż N punktami mogły dostać wartości bliskie zeru (Dask). | `interpolate.py` / `interpolation/`: jeden silnik KD-tree z zapytaniami w blokach, używane są istniejące punkty, GeoTIFF zorientowany na północ, limit geoidy jako ustawienie, opcjonalna kompresja siatki z kontrolą VT/VF, zakładka w webowym GUI. |
+| 26 | **Weryfikacja RGB dekoderem (`ycbcr_decode_verify`)** | Tylko szybka kontrola po stronie kodera. | Ostateczny kandydat `cm=6` jest sprawdzany dokładnym torem dekodera: IDCT + `clip(+128)` + `ycbcr_to_rgb` (`_rgb_error_via_decoder`). |
+| 27 | **Wsadowe dekodowanie płaszczyzn `cm=6`** | Pętla IDCT blok po bloku przy dekompresji. | `_reconstruct_plane_batched` liczy `scipy.fft.idct` na paczkach bloków. |
+| 28 | **Tryby predykcyjny (`cm=7`) i SZ3 (`cm=8`)** | Tylko DCT. | Opcjonalne `--method pred` (`.fpred`, MED + kwantyzacja skalarna) i `--method sz3` (`.sz3`, zewnętrzny SZ3) z pełną integracją `.7z` i metadanych GeoTIFF. |
+| 29 | **Interpolacja IDW** | `interpolation.py` z silnikiem NumPy/numexpr albo Dask; komórki z mniej niż N punktami mogły dostać wartości bliskie zeru (Dask). | `interpolate.py` / `interpolation/`: jeden silnik KD-tree z zapytaniami w blokach, używane są istniejące punkty, GeoTIFF zorientowany na północ, limit geoidy jako ustawienie, opcjonalna kompresja siatki z kontrolą VT/VF, zakładka w webowym GUI. |
 
 ---
 

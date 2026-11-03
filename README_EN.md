@@ -544,7 +544,8 @@ graph TD
 Geo[Input GeoTIFF / Raster] --> Method{--method selector}
 
 Method -->|dct default| Route{Data type & mode}
-Method -->|pred, per band| cm7[Near-lossless MED predictive cm=7 .fpred]Method -->|sz3, per band| cm8[External SZ3 absolute-error cm=8 .sz3]
+Method -->|pred, per band| cm7[Near-lossless MED predictive cm=7 .fpred]
+Method -->|sz3, per band| cm8[External SZ3 absolute-error cm=8 .sz3]
 Route -->|float32 / int16| cm3[DCT compression: elevation data cm=3]
 Route -->|uint8 / 1 channel / accuracy mode| cm5[DCT compression: single-channel and multi-channel cm=5]
 Route -->|uint8 / RGB / accuracy mode| cm6[DCT compression: per-block YCbCr cm=6]
@@ -1012,7 +1013,8 @@ The most important encoding modes are:
 | `cm=6` | RGB in accuracy mode | per-block YCbCr, separate Y/Cb/Cr storage with exact decoder-side RGB verification |
 | `cm=4` | uint8 lossless | lossless PNG Sub filter + zlib |
 | `cm=1` / `jpeg_strips` | RGB without accuracy mode | TurboJPEG quality-based, `rgb.bin + meta.msgpack` |
-| `cm=7` (`--method pred`) | float/int rasters (each band separately) | near-lossless scalar quantization + MED predictor residuals (`.fpred` / `.7z`) || `cm=8` (`--method sz3`) | float/int rasters (each band separately) | external SZ3 (`pysz`) absolute-error payload + NoData mask (`.sz3` / `.7z`) |
+| `cm=7` (`--method pred`) | float/int rasters (each band separately) | near-lossless scalar quantization + MED predictor residuals (`.fpred` / `.7z`) |
+| `cm=8` (`--method sz3`) | float/int rasters (each band separately) | external SZ3 (`pysz`) absolute-error payload + NoData mask (`.sz3` / `.7z`) |
 ### 8.1 Common DC/AC Storage
 
 For DCT paths, coefficients are stored in two streams:
@@ -1466,6 +1468,10 @@ Each file of a job runs as a `compress.py --quiet` subprocess (an interpolation 
 
 
 
+---
+
+## 12. Summary of FIDWAC v2 Innovations
+
 FIDWAC v2 introduces the following improvements over FIDWaC v1:
 
 | No. | Area | FIDWaC v1 | FIDWAC v2 |
@@ -1495,10 +1501,10 @@ FIDWAC v2 introduces the following improvements over FIDWaC v1:
 | 23 | **uint8 accuracy mode (`cm=5`)** | No dedicated accuracy path for single 8-bit channels. | Maximum error guarantee for values 0-255, centering -128, and adaptive `scaling_factor`. |
 | 24 | **Lossless PNG mode (`cm=4`)** | No dedicated lossless uint8 mode. | PNG Sub filter + zlib, `max error = 0`. |
 | 25 | **Per-block RGB YCbCr (`cm=6`)** | No RGB path with error guarantee. | Default RGB accuracy path with cascading multipliers, RGB validation, and compact stream packing. |
-| 27 | **Decoder-verified RGB YCbCr (`ycbcr_decode_verify`)** | Encoder-side fast check only. | Final `cm=6` candidate is verified with the exact decoder IDCT + `clip(+128)` + `ycbcr_to_rgb` pipeline (`_rgb_error_via_decoder`). |
-| 28 | **Batched `cm=6` plane decoding** | Block-by-block IDCT loop during decompression. | `_reconstruct_plane_batched` evaluates `scipy.fft.idct` on block chunks. |
-| 29 | **Explicit predictive (`cm=7`) & SZ3 (`cm=8`) modes** | DCT-only pipeline. | Optional `--method pred` (`.fpred` MED + scalar quantization) and `--method sz3` (`.sz3` external SZ3) with full `.7z` and GeoTIFF metadata integration. |
-| 30 | **IDW interpolation** | `interpolation.py` with NumPy/numexpr or Dask engine; cells with fewer than N points could get values close to zero (Dask). | `interpolate.py` / `interpolation/`: one KD-tree engine with block queries, the points that exist are used, north-up GeoTIFF, geoid limit as a setting, optional compression of the grid with the VT/VF check, web GUI tab. |
+| 26 | **Decoder-verified RGB YCbCr (`ycbcr_decode_verify`)** | Encoder-side fast check only. | Final `cm=6` candidate is verified with the exact decoder IDCT + `clip(+128)` + `ycbcr_to_rgb` pipeline (`_rgb_error_via_decoder`). |
+| 27 | **Batched `cm=6` plane decoding** | Block-by-block IDCT loop during decompression. | `_reconstruct_plane_batched` evaluates `scipy.fft.idct` on block chunks. |
+| 28 | **Explicit predictive (`cm=7`) & SZ3 (`cm=8`) modes** | DCT-only pipeline. | Optional `--method pred` (`.fpred` MED + scalar quantization) and `--method sz3` (`.sz3` external SZ3) with full `.7z` and GeoTIFF metadata integration. |
+| 29 | **IDW interpolation** | `interpolation.py` with NumPy/numexpr or Dask engine; cells with fewer than N points could get values close to zero (Dask). | `interpolate.py` / `interpolation/`: one KD-tree engine with block queries, the points that exist are used, north-up GeoTIFF, geoid limit as a setting, optional compression of the grid with the VT/VF check, web GUI tab. |
 ---
 
 ## 13. Performance Test Results - FIDWAC v2 vs SZ3

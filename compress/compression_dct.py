@@ -49,7 +49,6 @@ from .compression_utils import (
     serialize_compressed_blocks,
 )
 
-# Return type alias for clarity
 _DctResult = Tuple[List, np.ndarray, List, float, bool, int, Tuple[int, int]]
 
 RGB_STRIP_PIXELS = 8 * 1024 * 1024  # pixels per strip of block rows in the cm=6 compression
@@ -88,7 +87,6 @@ def compress_channel_dct(
 
     if config.compression.auto_select_block_size:
         if is_integer:
-            # For uint8/int8: auto-select BOTH scaling_factor and block_size
             sf, bs = auto_select_uint8_parameters(image, config, nodata_value)
             config = deepcopy(config)
             config.compression.block_size = bs
@@ -477,7 +475,6 @@ def _compress_rgb_strip(
     r_p, g_p, b_p = _pad(r), _pad(g), _pad(b)
     del Y, Cb, Cr
 
-    # Extract all blocks (vectorised reshape)
     padded_H, padded_W = r_p.shape
     rows, cols = padded_H // n, padded_W // n
     total_blocks = rows * cols
@@ -546,7 +543,6 @@ def _compress_rgb_strip(
         ]
     del Y_blk, Cb_blk, Cr_blk, r_blk, g_blk, b_blk
 
-    # Batch and process
     blocks_per_batch = max(256, total_blocks // max(1, num_processes * 4))
     batches = [
         (i // blocks_per_batch, all_blocks[i : i + blocks_per_batch])

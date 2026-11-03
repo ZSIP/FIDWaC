@@ -19,9 +19,7 @@ from core.dct import from_zigzag, idct2, _get_idct_basis
 from config import Config, load_config
 from engine.utils import integer_range
 
-# ---------------------------------------------------------------------------
 # Numba JIT helpers for hot-path binary search (8×8 blocks)
-# ---------------------------------------------------------------------------
 # The numba cache must live on a Linux filesystem. Reads through the Windows
 # mounts (/mnt/...) add about 500 ms of latency. Prefer tmpfs (/dev/shm) and
 # fall back to /tmp when it is unavailable.
@@ -258,7 +256,6 @@ def _eval_error_for_len(
         )
 
 
-    # Fast path with precomputed basis
     if use_fast_basis:
         coeffs = org_dct_zigzag[:L].astype(np.float64, copy=False)
         basis = _get_idct_basis(n, dct_type)
@@ -277,7 +274,6 @@ def _eval_error_for_len(
                 diff = original_matrix.astype(np.float64, copy=False) - recon
         return max(float(diff.max()), float(-diff.min()))
 
-    # Classic path
     array = np.zeros(len(org_dct_zigzag), dtype=np.float64)
     array[:L] = org_dct_zigzag[:L]
     reconstructed = from_zigzag(array, n)
@@ -408,7 +404,6 @@ def _binary_search_min_len_incremental(
     basis = _get_idct_basis(n, dct_type)
     coeffs = org_dct_zigzag.astype(np.float64, copy=False)
 
-    # Initialize at start_L
     cur_L = max(lo, min(start_L, hi))
     if cur_L > 0:
         recon = np.tensordot(coeffs[:cur_L], basis[:cur_L], axes=(0, 0))
@@ -420,7 +415,6 @@ def _binary_search_min_len_incremental(
 
     err_start = float(_nb_max_err(diff))
 
-    # Step 1: Check start_L and narrow range
     if err_start <= accuracy:
         ans = cur_L
         hi = cur_L - 1
@@ -431,7 +425,6 @@ def _binary_search_min_len_incremental(
     if lo > hi:
         return ans, steps
 
-    # Step 2: Standard binary search on [lo, hi]
     l, r = lo, hi
     while l <= r:
         mid = (l + r) // 2
@@ -553,7 +546,6 @@ def refine_dct_array(
 
     total_len = len(org_dct_zigzag)
 
-    # Options from config
     use_fast_basis = config.performance.fast_eval_basis
     use_incremental = config.performance.incremental_backscan
     verify_full = config.performance.verify_with_full_idct
@@ -561,11 +553,9 @@ def refine_dct_array(
     backscan_break = config.model.backscan_break_after
     accept_if_within = config.model.accept_prediction_if_within_accuracy
 
-    # Starting point
     if predicted_L is not None and predicted_L > 0:
         start_L = max(1, min(int(predicted_L), total_len))
     else:
-        # Default starting point - middle of range
         start_L = total_len // 2
 
     _is_uint8 = src_dtype in ("uint8", "int8", "uint16", "int16")
@@ -644,7 +634,6 @@ def refine_dct_array(
             else:
                 candidate_lengths = [start_L]
 
-            # Convert to a sorted list of unique candidate lengths
             candidates = sorted(
                 list(set(max(1, min(int(l), total_len)) for l in candidate_lengths))
             )
@@ -688,7 +677,6 @@ def refine_dct_array(
                 best_L = None
                 best_err = None
                 if err_max <= accuracy:
-                    # At least one candidate works.
                     if accept_if_within:
                         # iterate the candidates in ascending order and accept the first one that meets the accuracy
                         for candidate_L in candidates:
@@ -733,7 +721,6 @@ def refine_dct_array(
                                 result = np.round(coeffs * scaling_factor).astype(int)
                                 return result, best_err, None
                     else:
-                        # binary search over the candidate list for the smallest working candidate
                         lo_idx, hi_idx = 0, len(candidates) - 1
                         best_idx = hi_idx  # we know candidates[-1] works
                         best_err = err_max
@@ -794,7 +781,6 @@ def refine_dct_array(
         except (ValueError, IndexError):
             pass
 
-    # Binary search
     if predicted_L is not None and predicted_L > 0 and use_fast_basis and use_incremental:
         # incremental search with the prediction as the starting point (a linear window around it)
         L_found, _ = _binary_search_min_len_incremental(
@@ -836,9 +822,7 @@ def refine_dct_array(
             eval_fn=_eval,
         )
 
-    # Backscan for minimization
     if backscan_base > 0 and L_found > 1:
-        # backscan scales with the block size
         scale_factor = (n / 8) * math.sqrt(n / 8)
         backscan = int(backscan_base * scale_factor)
         start = max(1, L_found - backscan)
@@ -897,7 +881,6 @@ def refine_dct_array(
                 except (ValueError, IndexError):
                     continue
 
-    # Verification with full IDCT
     if verify_full:
         err_full = _eval(
             org_dct_zigzag,
@@ -928,7 +911,6 @@ def refine_dct_array(
                 float32_store=_store32,
             )
 
-    # Build result
     coeffs = org_dct_zigzag[:L_found]
     result = np.round(coeffs * scaling_factor).astype(int)
 
@@ -966,10 +948,6 @@ def refine_dct_array(
 
     return result, max_error, None  # Don't return reconstruction - not needed
 
-
-# =============================================================================
-# EXPORT
-# =============================================================================
 
 __all__ = [
     "refine_dct_array",

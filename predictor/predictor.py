@@ -16,12 +16,10 @@ import numba as nb
 from core.dct import dct2, to_zigzag
 from .predictor_npy import predict_from_multi_lookup_npy
 
-# ---------------------------------------------------------------------------
 # Numba JIT — fast extraction of 4 features from DCT zigzag in a single pass.
 # Uses Parseval's theorem (DCT ortho): std_dev = sqrt(sum(ac²)) / N
 # Features: ac_abs_mean (#1 Spearman+MI), zero_ratio (#1 RF 87.9%),
 #           ac_std (#3 Spearman), std_dev (#3 Spearman, from Parseval without orig block).
-# ---------------------------------------------------------------------------
 
 
 @nb.njit(cache=True, fastmath=True)
@@ -103,17 +101,12 @@ def _nb_extract_features_batch(dct_zigzags: np.ndarray) -> tuple:
     return ac_abs_mean, zero_ratio
 
 
-# Warm-up JIT on import (8×8 dummy block)
 _dz = np.zeros(64, dtype=np.float64)
 _nb_extract_features(_dz, 8)
 _dz_batch = np.zeros((1, 64), dtype=np.float64)
 _nb_extract_features_batch(_dz_batch)
 del _dz, _dz_batch
 
-
-# =============================================================================
-# HEURISTIC PREDICTOR
-# =============================================================================
 
 
 class HeuristicPredictor:
@@ -129,7 +122,6 @@ class HeuristicPredictor:
         self.block_size = block_size
         self.total_coeffs = block_size * block_size
 
-        # Accuracy -> coefficient PERCENTAGE mapping
         self.accuracy_to_ratio = {
             0.01: 0.75,  # very high quality
             0.05: 0.50,  # high quality
@@ -140,21 +132,17 @@ class HeuristicPredictor:
 
     def predict_dct_length(self, block: np.ndarray) -> int:
         """Predict optimal DCT length for a block."""
-        # Auto-detect block size
         if hasattr(block, "shape"):
             detected_size = block.shape[0]
             if detected_size != self.block_size:
                 self.block_size = detected_size
                 self.total_coeffs = detected_size * detected_size
 
-        # Baseline based on accuracy
         base_ratio = self._get_base_ratio(self.accuracy)
         base_length = int(base_ratio * self.total_coeffs)
 
-        # Variance-based correction
         variance = float(np.var(block))
 
-        # Dynamic thresholds scaled with block size
         size_scale = (self.block_size / 8.0) ** 2
         high_threshold = 1000 * size_scale
         mid_threshold = 100 * size_scale
@@ -182,10 +170,6 @@ class HeuristicPredictor:
         closest = min(accuracies, key=lambda x: abs(x - accuracy))
         return self.accuracy_to_ratio[closest]
 
-
-# =============================================================================
-# ADVANCED HEURISTIC PREDICTOR (Lookup Table)
-# =============================================================================
 
 
 class AdvancedHeuristicPredictor:
@@ -281,7 +265,6 @@ class AdvancedHeuristicPredictor:
 
     def predict_dct_length(self, block: np.ndarray) -> int:
         """Predict optimal DCT length using lookup table."""
-        # Auto-detect block size
         if hasattr(block, "shape"):
             detected_size = block.shape[0]
             if detected_size != self.block_size:
@@ -289,7 +272,6 @@ class AdvancedHeuristicPredictor:
                 self.total_coeffs = detected_size * detected_size
                 self._load_lookup_tables()  # Reload for new size
 
-        # Extract 4 features via Numba (one pass over AC zigzag)
         features = self._extract_features_optimized(block)
         pred = self._predict_from_multi_lookup(features)
         if pred is not None:
@@ -312,7 +294,6 @@ class AdvancedHeuristicPredictor:
             preds = np.array([None] * len(blocks), dtype=np.int32)
             return preds, [[] for _ in blocks]
 
-        # Vectorized extraction of 4 features from DCT (without original blocks)
         blocks_array = np.stack(blocks, axis=0)  # (batch, n, n)
         batch_size = blocks_array.shape[0]
 
@@ -321,13 +302,11 @@ class AdvancedHeuristicPredictor:
         dct_batch = scipy_dct(scipy_dct(blocks_array, axis=1, norm="ortho"), axis=2, norm="ortho")
         dct_flat = np.round(dct_batch.reshape(batch_size, -1), 2)
 
-        # Features — one pass Numba (zero temporary allocations)
         ac_abs_mean, zero_ratio = _nb_extract_features_batch(
             dct_flat.astype(np.float64, copy=False)
         )
         queues = [[] for _ in range(batch_size)]
 
-        # Batch query to grid
         if getattr(self, "_use_npy_format", False) and (
             getattr(self, "_use_kdtree", False) or getattr(self, "_use_grid", False)
         ):
@@ -359,13 +338,11 @@ class AdvancedHeuristicPredictor:
         """
         batch_size = len(dct_zigzags)
 
-        # Features from AC zigzag — one pass Numba (zero temporary allocations)
         dct_arr = dct_zigzags if isinstance(dct_zigzags, np.ndarray) else np.asarray(dct_zigzags)
         ac_abs_mean, zero_ratio = _nb_extract_features_batch(dct_arr.astype(np.float64, copy=False))
 
         queues = [[] for _ in range(batch_size)]
 
-        # Batch query to grid / cKDTree - single query instead of loop
         if getattr(self, "_use_npy_format", False) and (
             getattr(self, "_use_kdtree", False) or getattr(self, "_use_grid", False)
         ):
@@ -379,7 +356,6 @@ class AdvancedHeuristicPredictor:
                 "WARNING: AdvancedHeuristicPredictor requires grid or kdtree to be loaded. "
                 "Falling back to binary search."
             )
-            # Return default L value (half of max coefficients) instead of None
             default_L = (self.block_size * self.block_size) // 2
             results = np.full(batch_size, default_L, dtype=np.int32)
 
@@ -395,10 +371,6 @@ class AdvancedHeuristicPredictor:
             return result
         return None
 
-
-# =============================================================================
-# FACTORY FUNCTION
-# =============================================================================
 
 _predictor_cache: dict = {}
 
@@ -435,7 +407,6 @@ def get_predictor(
     -------
     Predictor instance
     """
-    # Load config if not provided
     if config is None:
         from config import load_config
 
@@ -468,12 +439,10 @@ def get_predictor(
     if cache_key in _predictor_cache:
         return _predictor_cache[cache_key]
 
-    # Use paths from config
     models_dir = config.models_dir
 
     predictor = None
 
-    # For uint8 data, use uint8-specific predictor if available
     is_uint8 = src_dtype in ("uint8", "int8", "uint16", "int16")
 
     if is_uint8 and config.model.uint8_use_L_prediction:
@@ -495,12 +464,10 @@ def get_predictor(
 
     if backend == "heuristic":
         if advanced_heuristic:
-            # Advanced heuristic with lookup table
             predictor = AdvancedHeuristicPredictor(
                 accuracy=accuracy, block_size=block_size, lookup_dir=models_dir
             )
         else:
-            # Simple heuristic (std)
             predictor = HeuristicPredictor(accuracy=accuracy, block_size=block_size)
 
     else:
@@ -509,10 +476,6 @@ def get_predictor(
     _predictor_cache[cache_key] = predictor
     return predictor
 
-
-# =============================================================================
-# EXPORT
-# =============================================================================
 
 __all__ = [
     "HeuristicPredictor",

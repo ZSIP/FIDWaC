@@ -96,10 +96,6 @@ def predict_from_multi_lookup_npy(predictor, features: np.ndarray) -> tuple:
         return None, []
 
 
-# ---------------------------------------------------------------------------
-# Internal quantile grid functions
-# ---------------------------------------------------------------------------
-
 
 def _single_grid_lookup(grid, e_acm, e_zr, ac_abs_mean: float, zero_ratio: float) -> int:
     """O(log B) lookup — searchsorted on quantile thresholds.

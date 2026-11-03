@@ -23,18 +23,11 @@ from config import Config
 from engine.blocks import process_block
 from engine.utils import numpy_to_python
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 RASTER_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp", ".asc", ".img", ".gif"}
 
 _STREAMING_THRESHOLD = 256 * 1024 * 1024  # bytes — ~256 MB for float32
 
-
-# ---------------------------------------------------------------------------
-# Padding / block extraction
-# ---------------------------------------------------------------------------
 
 
 def pad_image(image: np.ndarray, block_size: int) -> Tuple[np.ndarray, Tuple[int, int]]:
@@ -56,10 +49,6 @@ def extract_blocks(
     blocks_3d = image.reshape(H // n, n, W // n, n).transpose(0, 2, 1, 3).reshape(-1, n, n)
     return [(i, blocks_3d[i], nodata_value) for i in range(blocks_3d.shape[0])]
 
-
-# ---------------------------------------------------------------------------
-# Auto block-size selection
-# ---------------------------------------------------------------------------
 
 
 def _sample_results_per_block(sample_blocks, test_n, config):
@@ -210,7 +199,6 @@ def auto_select_uint8_parameters(
     if not config.output.quiet:
         print("  Auto-selecting uint8 parameters (sf, bs)...")
 
-    # --- Try lookup grid first (fast O(1) lookup) ---
     try:
         from pathlib import Path
         from predictor.predictor_uint8 import load_uint8_lookup_grid, predict_uint8_parameters
@@ -219,7 +207,6 @@ def auto_select_uint8_parameters(
         if grid_path.exists():
             grid_data = load_uint8_lookup_grid(str(grid_path))
             if grid_data is not None:
-                # Extract features from full image
                 valid_data = (
                     image[image != nodata_value] if nodata_value is not None else image.flatten()
                 )
@@ -227,7 +214,6 @@ def auto_select_uint8_parameters(
                 if len(valid_data) > 0:
                     from core.dct import dct2, to_zigzag
 
-                    # Sample a few blocks to compute average ac_abs_mean and zero_ratio
                     ref_block_size = getattr(config.compression, "block_size", 16)
                     padded, _ = pad_image(
                         image, ref_block_size
@@ -249,7 +235,6 @@ def auto_select_uint8_parameters(
                             dct = dct2(block_data)
                             zigzag = to_zigzag(dct)
 
-                            # Calculate ac_abs_mean and zero_ratio
                             ac_zigzag = zigzag[1:]  # Skip DC
                             ac_abs_mean = np.mean(np.abs(ac_zigzag))
                             zero_ratio = np.sum(ac_zigzag == 0) / len(ac_zigzag)
@@ -260,7 +245,6 @@ def auto_select_uint8_parameters(
                             pass
 
                     if acm_values and zr_values:
-                        # Use median of sampled features for prediction
                         avg_acm = np.median(acm_values)
                         avg_zr = np.median(zr_values)
 
@@ -275,8 +259,6 @@ def auto_select_uint8_parameters(
     except Exception as e:
         if not config.output.quiet:
             print(f"  Lookup grid unavailable ({e}), falling back to sample-based selection...")
-
-    # --- Fallback: sample-based testing ---
 
     valid_data = image[image != nodata_value] if nodata_value is not None else image.flatten()
     image_std = np.std(valid_data) if len(valid_data) > 0 else 0
@@ -299,7 +281,6 @@ def auto_select_uint8_parameters(
 
     results = {}
     for test_sf, test_bs in test_configs:
-        # Prepare image in uint8 (already is) and sample blocks
         padded, _ = pad_image(image, test_bs)
         max_sample = config.compression.auto_select_sample_size
         H, W = padded.shape
@@ -328,7 +309,6 @@ def auto_select_uint8_parameters(
             total_error += error
         max_error = max(errors) if errors else 0.0
 
-        # Restore original sf
         config.compression.uint8_scaling_factor = orig_sf
         config.compression.decimal_places = orig_decimal
         if orig_override is None:
@@ -370,10 +350,6 @@ def auto_select_uint8_parameters(
 
     return best_sf, best_bs
 
-
-# ---------------------------------------------------------------------------
-# Compressed-blocks serialization (shared by DCT paths)
-# ---------------------------------------------------------------------------
 
 
 def serialize_compressed_blocks(
@@ -446,35 +422,26 @@ def serialize_compressed_blocks_rgb(
     masks_data: List[Any] = []
 
     for idx, metadata in compressed_blocks:
-        # Store coefficients, multipliers, and lengths for each channel
         for ch in ["Y", "Cb", "Cr"]:
             L_ch = metadata[ch]["L"]
             lengths[ch].append(L_ch)
 
             coeffs = metadata[ch]["coeffs"]
-            # Ensure numpy arrays are converted to plain Python lists
             if isinstance(coeffs, np.ndarray):
                 coeffs = coeffs.tolist()
             coeffs_dict[ch]["coeffs"].extend(coeffs)
             coeffs_dict[ch]["multipliers"].append(float(metadata[ch]["multiplier"]))
 
-        # Store global scaling factor (same for all blocks)
         if coeffs_dict["sf"] is None:
             coeffs_dict["sf"] = metadata["sf"]
 
-        # Store fallback flag
         coeffs_dict["fallback"].append(metadata.get("fallback", False))
 
-        # Store masks if present
         if metadata.get("masks"):
             masks_data.append([idx, metadata["masks"]])
 
     return lengths, coeffs_dict, masks_data
 
-
-# ---------------------------------------------------------------------------
-# Archive helpers
-# ---------------------------------------------------------------------------
 
 
 def _find_7z_cmd() -> Optional[str]:

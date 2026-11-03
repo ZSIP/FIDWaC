@@ -34,7 +34,6 @@ def compress_channel_lossless(
 
     raw_compressed = zlib.compress(data.tobytes(), level=6)
 
-    # Sub filter: subtract previous pixel horizontally
     filtered = data.copy()
     filtered[:, 1:] = data[:, 1:] - data[:, :-1]
     filtered_compressed = zlib.compress(filtered.tobytes(), level=6)

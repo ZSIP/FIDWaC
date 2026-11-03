@@ -50,7 +50,6 @@ def predict_uint8_parameters(ac_abs_mean: float, zero_ratio: float, grid_data: d
         edges_acm = grid_data["edges_acm"]
         edges_zr = grid_data["edges_zr"]
 
-        # Find bin indices using quantile edges
         i = np.clip(np.searchsorted(edges_acm[1:-1], ac_abs_mean), 0, grid_sf.shape[0] - 1)
         j = np.clip(np.searchsorted(edges_zr[1:-1], zero_ratio), 0, grid_sf.shape[1] - 1)
 
@@ -95,7 +94,6 @@ def predict_uint8_parameters_batch(
         edges_acm = grid_data["edges_acm"]
         edges_zr = grid_data["edges_zr"]
 
-        # Vectorized bin lookup
         i = np.clip(np.searchsorted(edges_acm[1:-1], ac_abs_means), 0, grid_sf.shape[0] - 1)
         j = np.clip(np.searchsorted(edges_zr[1:-1], zero_ratios), 0, grid_sf.shape[1] - 1)
 
@@ -109,10 +107,6 @@ def predict_uint8_parameters_batch(
         n = len(ac_abs_means)
         return np.ones(n, dtype=np.uint8), np.full(n, 16, dtype=np.uint8)
 
-
-# ---------------------------------------------------------------------------
-# Per-block DCT length (L) predictor
-# ---------------------------------------------------------------------------
 
 
 def load_uint8_L_grid(
@@ -139,14 +133,11 @@ def load_uint8_L_grid(
     dict with keys: grid_L, edges_acm, edges_zr
         or None if file not found.
     """
-    # Convert model_dir to absolute path
     model_dir = str(Path(model_dir).resolve())
-    # Predefined accuracies
     predefined_accuracies = [2, 3, 5, 10, 20, 30]
 
     # 1. Try accuracy-specific combined YCbCr file (grid_L_Y / grid_L_Cb / grid_L_Cr)
     if is_ycbcr and accuracy is not None:
-        # First try exact accuracy
         acc_label = (
             str(int(accuracy)) if float(accuracy).is_integer() else str(accuracy).replace(".", "p")
         )
@@ -275,10 +266,6 @@ def predict_uint8_L_batch(
     return np.maximum(1, grid_L[i, j].astype(np.int32))
 
 
-# =============================================================================
-# UINT8 PREDICTOR CLASS (compatible with float predictor interface)
-# =============================================================================
-
 
 class Uint8Predictor:
     """
@@ -318,7 +305,6 @@ class Uint8Predictor:
         self.config = config
         self.is_ycbcr = is_ycbcr
 
-        # Get scaling factor from config
         if config is not None:
             sf_override = getattr(config, "_scaling_factor_override", None)
             sf_cfg = getattr(config.compression, "uint8_scaling_factor", [1])
@@ -336,7 +322,6 @@ class Uint8Predictor:
             block_size, self.scaling_factor, models_dir, is_ycbcr=is_ycbcr, accuracy=accuracy
         )
         if combined is not None and "grid_L_Y" in combined:
-            # Accuracy-specific combined file with separate Y/Cb/Cr grids
             edges = {
                 "edges_acm": combined["edges_acm"],
                 "edges_zr": combined["edges_zr"],
@@ -348,7 +333,6 @@ class Uint8Predictor:
             self._l_grid = self._l_grid_Y  # fallback for non-batch paths
             self.has_channel_grids = True
         else:
-            # Generic single-grid fallback
             self._l_grid = combined
             if self._l_grid is None:
                 print(
@@ -373,17 +357,14 @@ class Uint8Predictor:
             # Fallback: use half of total coefficients
             return (self.block_size * self.block_size) // 2
 
-        # Center block for DCT (0-255 -> -128..127)
         centered = block.astype(np.float32) - 128.0
 
-        # Compute DCT and zigzag
         from core.dct import dct2, to_zigzag
 
         dct_block = dct2(centered, dct_type=2)
         dct_block = np.round(dct_block, 2)
         zigzag = to_zigzag(dct_block).astype(np.float64)
 
-        # Extract features
         ac = zigzag[1:]  # skip DC
         ac_abs_mean = float(np.mean(np.abs(ac)))
         zero_ratio = float(np.sum(ac == 0)) / max(1, len(ac))
@@ -407,23 +388,19 @@ class Uint8Predictor:
             n_blocks = len(blocks)
             return np.full(n_blocks, (self.block_size * self.block_size) // 2, dtype=np.int32)
 
-        # Batch centering
         blocks_arr = np.array([b.astype(np.float32) - 128.0 for b in blocks])
 
-        # Batch DCT
         from core.dct import _get_zigzag_indices
         from scipy.fft import dct as scipy_dct
 
         dct_batch = scipy_dct(scipy_dct(blocks_arr, axis=1, norm="ortho"), axis=2, norm="ortho")
         dct_batch = np.round(dct_batch, 2)
 
-        # Zigzag conversion
         B = len(blocks)
         n = self.block_size
         idx_z = _get_zigzag_indices(n)
         zigzag_batch = dct_batch.reshape(B, -1)[:, idx_z]
 
-        # Extract features batch
         ac_abs_means = np.empty(B, dtype=np.float32)
         zero_ratios = np.empty(B, dtype=np.float32)
 
@@ -432,7 +409,6 @@ class Uint8Predictor:
             ac_abs_means[k] = float(np.mean(np.abs(ac)))
             zero_ratios[k] = float(np.sum(ac == 0)) / max(1, len(ac))
 
-        # Predict L batch
         predictions = predict_uint8_L_batch(ac_abs_means, zero_ratios, self._l_grid)
 
         return predictions
@@ -462,7 +438,6 @@ class Uint8Predictor:
         ac_abs_means = np.mean(np.abs(ac), axis=1).astype(np.float32)
         zero_ratios = (np.sum(ac == 0, axis=1) / max(1, ac.shape[1])).astype(np.float32)
 
-        # Use channel-specific grids when available (accuracy-specific combined file)
         if self.has_channel_grids:
             gn = batch_size // 3
             preds_Y = predict_uint8_L_batch(ac_abs_means[:gn], zero_ratios[:gn], self._l_grid_Y)
@@ -478,10 +453,6 @@ class Uint8Predictor:
 
         return predictions, [[] for _ in range(batch_size)]
 
-
-# =============================================================================
-# EXPORT
-# =============================================================================
 
 __all__ = [
     "load_uint8_lookup_grid",

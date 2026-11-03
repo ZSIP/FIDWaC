@@ -362,7 +362,6 @@ def process_block_batch(
 
         precomp_vectors = all_vectors[: len(dct_candidates)]
 
-    # L prediction
     backend = config.model.backend.lower()
     use_predictor = backend in ("heuristic",) or config.model.advanced_heuristic
 
@@ -403,7 +402,6 @@ def process_block_batch(
                 )
             predictor = _predictor_cache[_cache_key]
 
-            # batch prediction for AdvancedHeuristicPredictor and Uint8Predictor
             if (
                 isinstance(predictor, (AdvancedHeuristicPredictor, Uint8Predictor))
                 and dct_candidates
@@ -416,7 +414,6 @@ def process_block_batch(
                         if queues and k < len(queues) and queues[k]:
                             skip_queues[_idx] = queues[k]
             else:
-                # HeuristicPredictor: per-block prediction
                 eligible_blocks = [_mat for (_, _, _mat) in dct_candidates]
                 eligible_indices = [_idx for (_, _idx, _) in dct_candidates]
 
@@ -480,7 +477,6 @@ def process_block_batch(
             idx = block_tuple[0]
             L_pred = L_predictions.get(idx)
 
-            # reuse the zigzag computed in the batch pass when available
             if idx in precomp_map:
                 _idx, _mat, _nodata = block_tuple[:3]
                 # all-zero and all-NoData blocks are skipped in the first pass and never get here
@@ -686,10 +682,6 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# RGB <-> YCbCr conversion helpers (per-block)
-# ---------------------------------------------------------------------------
-
 
 def rgb_to_ycbcr(
     R: np.ndarray, G: np.ndarray, B: np.ndarray
@@ -723,10 +715,6 @@ def ycbcr_to_rgb(
     return R, G, B
 
 
-# ---------------------------------------------------------------------------
-# Per-block RGB processing with YCbCr validity check
-# ---------------------------------------------------------------------------
-
 
 def process_strip_batch(
     strip_data: Tuple[np.ndarray, int, int, Optional[float]],
@@ -748,7 +736,6 @@ def process_strip_batch(
 
     global_row_offset = y_start // n
 
-    # block tuples for process_block_batch
     blocks = []
     for local_idx in range(blocks_3d.shape[0]):
         local_row = local_idx // cols_of_blocks
@@ -756,13 +743,8 @@ def process_strip_batch(
         global_idx = (global_row_offset + local_row) * blocks_per_row + local_col
         blocks.append((global_idx, blocks_3d[local_idx], nodata_value))
 
-    # delegate to the batch function
     return process_block_batch((0, blocks), config)
 
-
-# ---------------------------------------------------------------------------
-# Per-block RGB / YCbCr compression (cm=6)
-# ---------------------------------------------------------------------------
 
 
 def _rgb_error_via_decoder(ch_data, n, sf, r_f, g_f, b_f):
@@ -1299,7 +1281,6 @@ def process_block_batch_rgb(
 
     if use_predictor:
         try:
-            # one predictor for all block sizes
             n = blocks[0][1].shape[1] if blocks else 16
 
             from predictor.predictor import get_predictor
@@ -1336,7 +1317,6 @@ def process_block_batch_rgb(
     if n_blocks == 0:
         return results
 
-    # group the blocks by block size (8, 16 or 32)
     from collections import defaultdict
 
     size_groups = defaultdict(list)  # n -> [(k, block_data), ...]
@@ -1355,7 +1335,6 @@ def process_block_batch_rgb(
     all_centered_Cr = [None] * n_blocks
     L_predictions = {}
 
-    # batch DCT and zigzag
     def _batch_dct_zigzag(blocks_arr, zigzag_idx, gn):
         dct_batch = scipy_dct(scipy_dct(blocks_arr, axis=1, norm="ortho"), axis=2, norm="ortho")
         dct_batch = np.round(dct_batch, dec)
@@ -1365,20 +1344,16 @@ def process_block_batch_rgb(
         gn = len(group)
         zigzag_idx = _get_zigzag_indices(bn)
 
-        # stack the channel blocks of this size group
         Y_all = np.stack([bd[1] for _, bd in group]).astype(np.float64) - 128.0
         Cb_all = np.stack([bd[2] for _, bd in group]).astype(np.float64) - 128.0
         Cr_all = np.stack([bd[3] for _, bd in group]).astype(np.float64) - 128.0
 
-        # batch DCT and zigzag
         zz_Y = _batch_dct_zigzag(Y_all, zigzag_idx, gn)
         zz_Cb = _batch_dct_zigzag(Cb_all, zigzag_idx, gn)
         zz_Cr = _batch_dct_zigzag(Cr_all, zigzag_idx, gn)
 
-        # batch L prediction
         if use_predictor and predictor is not None:
             try:
-                # predictor for this block size
                 cache_key_bn = (
                     config.model.backend.lower(),
                     config.model.advanced_heuristic,
@@ -1412,7 +1387,6 @@ def process_block_batch_rgb(
             except (ValueError, IndexError, RuntimeError):
                 pass
 
-        # store into the per-block arrays
         for gi, (k, _) in enumerate(group):
             all_zigzag_Y[k] = zz_Y[gi]
             all_zigzag_Cb[k] = zz_Cb[gi]

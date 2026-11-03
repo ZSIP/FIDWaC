@@ -10,7 +10,6 @@ Mixin class GUIPresets providing:
 import tkinter as tk
 from tkinter import ttk
 
-# Preset configurations
 PRESETS = {
     "▌ Quick": {
         "accuracy": 0.5,
@@ -81,7 +80,6 @@ class GUIPresets:
         self._preset_cb.grid(row=0, column=1, sticky=tk.W, padx=5)
         self._preset_cb.bind("<<ComboboxSelected>>", lambda e: self._apply_preset())
 
-        # Description label
         self._preset_desc = ttk.Label(
             f, text="", foreground="#888888", font=("TkDefaultFont", 8, "italic"), wraplength=300
         )
@@ -104,7 +102,6 @@ class GUIPresets:
         preset = PRESETS[preset_name]
         self._update_preset_description()
 
-        # Apply float settings
         if "accuracy" in preset:
             self.set_accuracy(preset["accuracy"])
 
@@ -115,7 +112,6 @@ class GUIPresets:
             self.auto_select.set(preset["auto_select"])
             self._on_auto_select_change()
 
-        # Apply uint8 settings
         if "rgb_quality" in preset:
             self.rgb_quality.set(preset["rgb_quality"])
             self._rq_label.config(text=f"{preset['rgb_quality']}%")
@@ -124,11 +120,9 @@ class GUIPresets:
             self.uint8_mode.set(preset["uint8_mode"])
             self._on_uint8_mode_change()
 
-        # Apply process settings
         if "files_parallel" in preset:
             self.files_parallel.set(preset["files_parallel"])
 
-        # Log the action
         self._log(f"✓ Preset applied: {preset_name}")
 
 

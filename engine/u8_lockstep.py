@@ -31,9 +31,6 @@ def _edge(nn):
     return int(round(nn ** 0.5))
 
 
-# ---------------------------------------------------------------------------
-# phases 1 and 3 - numba (CPU)
-# ---------------------------------------------------------------------------
 @nb.njit(cache=True)
 def _eval_float(zz, orig, L, acc, basis2):
     if _nb_tail_l2(zz, L) > acc * np.sqrt(np.float64(zz.shape[0])):
@@ -141,9 +138,7 @@ def quant_par(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES):
         _quant_row(ZZ[i], ORIG[i], ACC[i], SF[i], basis2, LIN[i], LF, ERR, RES, i)
 
 
-# ---------------------------------------------------------------------------
 # phase 2 - full IDCT verification (scipy, vectorised over rows)
-# ---------------------------------------------------------------------------
 def _classic_err(ZZ, ORIG, L):
     """max |orig + 128 - clip(round(idct(coeffs[:L]) + 128))| per row (classic path)."""
     m, nn = ZZ.shape
@@ -196,9 +191,6 @@ def classic_verify(ZZ, ORIG, ACC, LPRE):
     return L
 
 
-# ---------------------------------------------------------------------------
-# orchestration
-# ---------------------------------------------------------------------------
 def _run_pre(ZZ, ORIG, ACC, BS, basis2, LPRE, use_gpu, brk):
     if use_gpu:
         try:

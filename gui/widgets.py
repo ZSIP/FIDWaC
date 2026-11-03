@@ -12,18 +12,11 @@ import re as _re
 import sys
 import tkinter as tk
 
-# ---------------------------------------------------------------------------
-# Regex helpers (compiled once)
-# ---------------------------------------------------------------------------
 
 ANSI_RE = _re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 TQDM_RE = _re.compile(r"\d+%\|")
 PCT_RE = _re.compile(r"(\d+)%")
 
-
-# ---------------------------------------------------------------------------
-# Progress bar
-# ---------------------------------------------------------------------------
 
 
 class _CanvasProgressBar:
@@ -73,10 +66,6 @@ class _CanvasProgressBar:
             w // 2, h // 2, text=f"{self._pct}%", fill=text_col, font=("TkDefaultFont", 8, "bold")
         )
 
-
-# ---------------------------------------------------------------------------
-# Stream redirect
-# ---------------------------------------------------------------------------
 
 
 class _StreamToQueue:
@@ -161,9 +150,7 @@ class _StreamToQueue:
         return True
 
 
-# ---------------------------------------------------------------------------
 # Log tag support - send (text, tag) tuples for colored logs
-# ---------------------------------------------------------------------------
 
 
 def setup_log_text_colors(text_widget):
@@ -195,10 +182,6 @@ def detect_log_tag(line: str) -> str:
         result = "STATS"
     return result
 
-
-# ---------------------------------------------------------------------------
-# Tooltip
-# ---------------------------------------------------------------------------
 
 
 class ToolTip:
@@ -264,10 +247,6 @@ def _tip(widget, key: str):
         ToolTip(widget, TOOLTIPS[key])
     return widget
 
-
-# ---------------------------------------------------------------------------
-# Tooltip text registry
-# ---------------------------------------------------------------------------
 
 TOOLTIPS = {
     "input_type_file": "Compress a single file (GeoTIFF or raw float data).",

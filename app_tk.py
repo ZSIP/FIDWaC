@@ -103,21 +103,16 @@ def main():
     FidvacGUI(root)
     root.update_idletasks()
     
-    # Center window on screen and ensure it's not off-screen
     def _center_and_show():
-        # Get window dimensions
         window_width = root.winfo_width()
         window_height = root.winfo_height()
         
-        # Get screen dimensions
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         
-        # Calculate center position
         x = max(0, (screen_width - window_width) // 2)
         y = max(0, (screen_height - window_height) // 2)
         
-        # Ensure window doesn't go off-screen
         x = min(x, screen_width - window_width)
         y = min(y, screen_height - window_height)
         

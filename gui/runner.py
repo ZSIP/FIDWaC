@@ -94,10 +94,6 @@ class GUIRunner:
         self._minimize_backscan_spin = None
         self._backscan_break_spin = None
 
-    # =====================================================================
-    # LOG HELPERS
-    # =====================================================================
-
     def _log(self, message):
         self._log_queue.put(str(message))
 
@@ -113,7 +109,6 @@ class GUIRunner:
                     except Exception:
                         pass
                     self._log_text.config(state="normal")
-                    # Detect tag and apply color
                     tag = detect_log_tag(line)
                     self._log_text.insert(tk.END, line + "\n", tag)
                     self._log_text.see(tk.END)
@@ -127,14 +122,9 @@ class GUIRunner:
         self._log_text.delete(1.0, tk.END)
         self._log_text.config(state="disabled")
 
-    # =====================================================================
-    # CALLBACKS
-    # =====================================================================
-
     def _on_input_changed(self, *_):
         path = self.input_path.get()
 
-        # Check if file exists and determine operation
         if path.lower().endswith((".7z", ".fpred", ".sz3")):
             if os.path.exists(path):
                 self._op_label.config(text="✓ Decompression", foreground="#4ec94e")
@@ -177,7 +167,6 @@ class GUIRunner:
             self._u8acc_hint.config(foreground=_gray)
             self._u8rgb_label.config(foreground=_gray)
             self._backend_cb.config(state="readonly")
-            # Re-enable backscan controls (if created)
             if hasattr(self, "minimize_backscan"):
                 self._minimize_backscan_spin.config(state="normal")
                 self._backscan_break_spin.config(state="normal")
@@ -192,7 +181,6 @@ class GUIRunner:
             # Allow heuristic backend for uint8 accuracy mode (needed for cm=6 RGB YCbCr)
             self._backend_cb.config(state="readonly")
             self._on_backend_change()
-            # Keep backscan controls enabled (if created)
             if hasattr(self, "minimize_backscan"):
                 self._minimize_backscan_spin.config(state="normal")
                 self._backscan_break_spin.config(state="normal")
@@ -246,10 +234,6 @@ class GUIRunner:
             for w in [self._minimize_backscan_spin, self._backscan_break_spin]:
                 w.config(state="normal")
 
-    # =====================================================================
-    # FILE BROWSERS
-    # =====================================================================
-
     def _browse_input(self):
         if self.input_type.get() == "file":
             path = filedialog.askopenfilename(
@@ -275,10 +259,6 @@ class GUIRunner:
         path = filedialog.askdirectory(title="Select output directory")
         if path:
             self.output_dir.set(path)
-
-    # =====================================================================
-    # VALIDATION
-    # =====================================================================
 
     def _validate(self):
         result = True
@@ -307,10 +287,6 @@ class GUIRunner:
                     messagebox.showerror("Error", f"Processes must be between 1 and {self._cpu_count}.")
                     result = False
         return result
-
-    # =====================================================================
-    # BUILD CONFIG FROM GUI
-    # =====================================================================
 
     def _build_config(self):
         from config import load_config
@@ -366,10 +342,6 @@ class GUIRunner:
         config.compression.decimal_places = self.decimal_places.get()
 
         return config
-
-    # =====================================================================
-    # RUN / STOP
-    # =====================================================================
 
     def _stop(self):
         import signal
@@ -471,7 +443,6 @@ class GUIRunner:
             self._log("=" * 60)
             self._log("Stopped." if self._stop_event.is_set() else "Done!")
 
-            # Save config to persist GUI settings for next run
             if not self._stop_event.is_set():
                 from config import save_config
 
@@ -499,10 +470,6 @@ class GUIRunner:
         self._run_button.config(state="normal")
         self._stop_button.config(state="disabled")
         self._stop_event.clear()
-
-    # =====================================================================
-    # FILE PROCESSING
-    # =====================================================================
 
     def _process_file(self, input_path, output_dir, config, num_processes):
         from compress.decompression import decompress_file

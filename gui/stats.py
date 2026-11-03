@@ -27,10 +27,6 @@ class GUIStats:
         self._stats_frame = None
         self._stats_labels = {}
 
-    # =====================================================================
-    # STATS INITIALIZATION
-    # =====================================================================
-
     def _build_stats_panel(self, parent, row=4, column=0, columnspan=2):
         """Build statistics display panel."""
         self._stats_frame = ttk.LabelFrame(
@@ -41,7 +37,6 @@ class GUIStats:
         )
         self._stats_frame.columnconfigure(1, weight=1)
 
-        # Grid of stat labels
         self._stats_labels.clear()
         stats_data = [
             ("Files Processed", "files_processed", "0"),
@@ -82,7 +77,6 @@ class GUIStats:
                     comp_size = os.path.getsize(output_path)
                     self._stats_size_compressed += comp_size
                 elif output_path:
-                    # Log warning if output path doesn't exist
                     import sys
 
                     sys.stderr.write(f"Warning: Output path does not exist: {output_path}\n")
