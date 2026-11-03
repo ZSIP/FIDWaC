@@ -836,8 +836,8 @@ The implementation extracts **four DCT block features**: `ac_abs_mean`, `zero_ra
 $$
 \hat{L}_{adv} =
 \mathcal{T}_{grid}\left[
-\operatorname{qbin}\left(\log\left(1+\text{ac\_abs\_mean}\right)\right),
-\operatorname{qbin}\left(\text{zero\_ratio}\right)
+\mathrm{qbin}\left(\log\left(1+\text{ac\_abs\_mean}\right)\right),
+\mathrm{qbin}\left(\text{zero\_ratio}\right)
 \right]
 $$
 
