@@ -2,10 +2,9 @@
 
 Lossy block-DCT compression of rasters with a guaranteed maximum error: float32 elevation models, uint8 / uint16 bands and RGB orthophotos. Archives are `.7z` with msgpack metadata; georeferencing and NoData are stored in the archive.
 
-**Documentation / Dokumentacja**
+**Documentation**
 
-- [README_EN.md](README_EN.md) - full documentation (English)
-- [README_PL.md](README_PL.md) - pełna dokumentacja (polski)
+- [README_EN.md](README_EN.md) - full documentation
 
 ## Quick start
 
