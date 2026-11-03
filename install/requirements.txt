@@ -1,0 +1,25 @@
+# FIDWAC v2 — Python dependencies
+# Install: pip install -r install/requirements.txt
+
+# Numerical core: pinned to the versions the results were verified with. The encoder's accuracy
+# decisions depend on the floating-point behaviour of these packages (scipy.fft, numpy, numba),
+# so every installation must use the same versions. Upgrade only together with a re-check of
+# the parity tests (tests_batch/).
+numpy==2.5.4
+scipy==1.18.1
+numba==0.68.0
+rasterio>=1.2.0
+msgpack>=1.0.0
+py7zr>=0.20.0
+tqdm>=4.62.0
+PyTurboJPEG
+flask>=2.0
+
+# Interpolation (IDW point readers, plots, LAS/LAZ, SHP)
+laspy>=2.0.0
+lazrs>=0.6.2
+pyshp>=2.1.0
+matplotlib>=3.5.0
+
+# Build tool (for build_windows.bat)
+pyinstaller>=5.0

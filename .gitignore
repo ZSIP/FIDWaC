@@ -1,0 +1,56 @@
+source/
+results/
+install/*/bin/
+!analysis/results/
+!analysis/results/importance_bar_N8_acc0.05.png
+zrodlo/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.env
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Simulation files
+simulate_*.py
+
+# OS
+.DS_Store
+Thumbs.db
+temp/
+temp_test/
+temp_test_*.tif
+models/*.npy
+models/*.log
+
+# tif_compare moved to research/tif_compare
+
+# Research / experimental (not part of production)
+# research/  — unblocked for README_TRAINING_PL.md accuracy
+training_data_uint8/
+/tmp/uint8_*
+
+# Test scripts (development only)
+test_*.py
+!research/test_*.py
+test/
+
+# Old versions / temporary outputs
+FIDWAC_v2/
+uint8_optimization/
+
+test/
+original/
+
+# GPU batch path: built CUDA libraries (engine/gpu_u8/build.sh)
+engine/gpu_u8/*.so

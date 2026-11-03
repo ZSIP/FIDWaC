@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FIDWAC v2 — test results</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=asset_v) }}">
+  <style>
+    body { margin: 16px; }
+    .files a { margin-right: 10px; white-space: nowrap; }
+    .files a.sel { font-weight: 700; }
+    table.results td, table.results th { white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Test results</h1>
+      <p>{{ res_dir }} — last 300 rows</p>
+    </div>
+    <a href="/" style="color:#fff">← back to the app</a>
+  </header>
+
+  <section class="card">
+    {% if files %}
+    <p class="files">
+      {% for f in files %}
+      <a href="?f={{ f }}"{% if f == sel %} class="sel"{% endif %}>{{ f }}</a>
+      {% endfor %}
+    </p>
+    {% endif %}
+    {% if rows %}
+    <div class="table-wrap" style="max-height:80vh; overflow:auto">
+      <table class="results">
+        <thead>
+          <tr>{% for h in header %}<th>{{ h }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>{% for h in header %}<td>{{ r.get(h, "") }}</td>{% endfor %}</tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="hint">No CSV files yet — run the test suite first (Tests tab).</p>
+    {% endif %}
+  </section>
+</body>
+</html>

@@ -1,0 +1,14 @@
+test.dat
+compressed.out
+perf.data*
+build
+debug
+cmake-build-debug
+cmake-build-release
+.idea
+install
+.DS_Store
+.vscode
+sz3_install
+sz3_build
+test

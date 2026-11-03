@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FIDWAC v2</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=asset_v) }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>FIDWAC v2</h1>
+      <p>Raster compression with accuracy control, and IDW interpolation</p>
+    </div>
+    <span id="state" class="state idle">Idle</span>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Mode">
+    <button type="button" class="tab active" role="tab" data-tab="compress" aria-selected="true">Compression</button>
+    <button type="button" class="tab" role="tab" data-tab="interpolate" aria-selected="false">Interpolation (IDW)</button>
+    <button type="button" class="tab" role="tab" data-tab="tests" aria-selected="false">Tests</button>
+  </nav>
+
+  <main class="layout">
+    <div class="column form-col" data-panel="compress">
+      <section class="card">
+        <h2>Input and output</h2>
+        <div class="field">
+          <span class="label" data-help="Choose whether to process a single source file or scan every raster inside a folder and its subfolders.">Input type</span>
+          <div class="choice-row">
+            <label class="check"><input type="radio" name="input_type" value="file" data-field="input_type"> Single file</label>
+            <label class="check"><input type="radio" name="input_type" value="directory" data-field="input_type"> Folder (with subfolders)</label>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="input_path" data-help="Path to the input raster, archive, or folder that should be processed.">Input path</label>
+          <div class="with-button">
+            <input type="text" id="input_path" data-field="input_path" autocomplete="off" spellcheck="false" placeholder="/mnt/g/data/raster.tif">
+            <button type="button" class="button secondary" data-browse="input_path" data-browse-type="input_type" data-browse-mode="file">Browse…</button>
+          </div>
+          <div id="input-kind-badge" class="input-kind" hidden></div>
+          <p class="hint" id="op-hint"></p>
+          <p class="hint">Paths are Linux/WSL paths, for example <code>/mnt/g/data/raster.tif</code>.</p>
+        </div>
+        <div class="field">
+          <label class="label" for="output_dir" data-help="Folder where the compressed outputs and intermediate files will be written.">Output folder</label>
+          <div class="with-button">
+            <input type="text" id="output_dir" data-field="output_dir" autocomplete="off" spellcheck="false">
+            <button type="button" class="button secondary" data-browse="output_dir" title="Choose an output folder">Browse…</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Method and accuracy</h2>
+        <div class="field">
+          <label class="label" for="method" data-help="Select the compression method. DCT is the most common option for image rasters, while pred and sz3 are often preferred for scientific data.">Method</label>
+          <select id="method" data-field="method">
+            <option value="dct">dct</option>
+            <option value="pred">pred (cm=7)</option>
+            <option value="sz3">sz3 (cm=8)</option>
+          </select>
+          <p class="hint" id="method-help"></p>
+        </div>
+        <div class="field">
+          <label class="label" for="accuracy" data-help="Maximum tolerated error in the data units of the source raster. Lower values preserve detail but usually produce larger files.">Accuracy (maximum error, in data units)</label>
+          <div class="accuracy-row">
+            <input type="number" id="accuracy" data-field="accuracy" min="0.001" max="1" step="0.001" inputmode="decimal">
+            <input type="range" id="accuracy-range" min="0.001" max="1" step="0.001" aria-label="Accuracy slider">
+          </div>
+          <div class="chips" id="accuracy-chips" role="group" aria-label="Predefined accuracy values"></div>
+        </div>
+        <div class="field">
+          <span class="label" data-help="Quick preset configuration tuned for common image and scientific data trade-offs.">Preset</span>
+          <div class="chips" id="preset-chips" role="group" aria-label="Presets"></div>
+          <p class="hint" id="preset-desc"></p>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label class="label" for="block_size" data-help="Size of the processing block. Smaller blocks balance precision and speed differently than larger ones.">Block size</label>
+            <select id="block_size" data-field="block_size">
+              <option value="8">8</option>
+              <option value="16">16</option>
+              <option value="32">32</option>
+            </select>
+          </div>
+          <div class="field">
+            <span class="label" data-help="Automatically try several block sizes and use the best option for your dataset.">Block size choice</span>
+            <label class="check"><input type="checkbox" data-field="auto_select"> Select the block size automatically</label>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label" data-help="Limit the block sizes considered during automated selection. This is useful when you want to keep computation predictable.">Block sizes allowed for automatic selection</span>
+          <div class="choice-row">
+            <label class="check"><input type="checkbox" data-field="allowed_block_sizes" data-list value="8"> 8</label>
+            <label class="check"><input type="checkbox" data-field="allowed_block_sizes" data-list value="16"> 16</label>
+            <label class="check"><input type="checkbox" data-field="allowed_block_sizes" data-list value="32"> 32</label>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="backend" data-help="Choose the optimization backend. Binary is the standard safe option, while heuristic optimization may improve results on some input types.">Backend</label>
+          <select id="backend" data-field="backend">
+            <option value="binary">binary</option>
+            <option value="heuristic">heuristic</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="card data-branch" id="uint8-mode-panel">
+        <h2>8-bit data (RGB and uint8 bands)</h2>
+        <div class="field">
+          <span class="label" data-help="Pick the compression behavior for 8-bit image data: JPEG quality, accuracy-based encoding, or lossless PNG output.">Mode (dct)</span>
+          <div class="choice-row">
+            <label class="check"><input type="radio" name="uint8_mode" value="quality" data-field="uint8_mode"> Quality (JPEG)</label>
+            <label class="check"><input type="radio" name="uint8_mode" value="accuracy" data-field="uint8_mode"> Accuracy</label>
+            <label class="check"><input type="radio" name="uint8_mode" value="lossless" data-field="uint8_mode"> Lossless PNG</label>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field" id="quality-field">
+            <label class="label" for="rgb_quality" data-help="JPEG quality level from 1 to 100. Higher values preserve more visual detail but increase file size.">JPEG quality (1–100)</label>
+            <div class="accuracy-row">
+              <input type="number" id="rgb_quality" data-field="rgb_quality" min="1" max="100" step="1">
+              <input type="range" id="rgb_quality_range" min="1" max="100" step="1" aria-label="JPEG quality slider">
+            </div>
+            <p class="hint">Used in Quality mode (dct).</p>
+          </div>
+          <div class="field" id="uint8-accuracy-field">
+            <label class="label" for="uint8_accuracy" data-help="Maximum allowed value error for 8-bit data. This is especially important in accuracy-based mode and for pred/sz3 processing.">8-bit accuracy (maximum value error)</label>
+            <input type="number" id="uint8_accuracy" data-field="uint8_accuracy" min="2" max="255" step="1">
+            <p class="hint">Used in Accuracy mode (dct), and as the accuracy for pred and sz3 on 8-bit data. Minimum 2.</p>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label" data-help="Optional 1-based band mapping for RGB channels. Leave the fields empty to disable conversion.">RGB band numbers, 1-based (leave all three empty to turn this off)</span>
+          <div class="choice-row">
+            <input type="number" class="small" min="1" data-field="rgb_channels" data-index="0" aria-label="Red band">
+            <input type="number" class="small" min="1" data-field="rgb_channels" data-index="1" aria-label="Green band">
+            <input type="number" class="small" min="1" data-field="rgb_channels" data-index="2" aria-label="Blue band">
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="field">
+            <label class="label" for="ycbcr_y" data-help="This is an accuracy budget multiplier, not the RGB→YCbCr conversion coefficient. The actual conversion still uses the standard JPEG coefficients; this value scales how strict the Y-channel tolerance is during validation.">Y multiplier</label>
+            <input type="number" id="ycbcr_y" data-field="ycbcr_y" min="0" max="10" step="0.01">
+          </div>
+          <div class="field">
+            <label class="label" for="ycbcr_cb" data-help="This is an accuracy budget multiplier, not the RGB→YCbCr conversion coefficient. The actual conversion still uses the standard JPEG coefficients; this value scales how strict the Cb-channel tolerance is during validation.">Cb multiplier</label>
+            <input type="number" id="ycbcr_cb" data-field="ycbcr_cb" min="0" max="10" step="0.01">
+          </div>
+          <div class="field">
+            <label class="label" for="ycbcr_cr" data-help="This is an accuracy budget multiplier, not the RGB→YCbCr conversion coefficient. The actual conversion still uses the standard JPEG coefficients; this value scales how strict the Cr-channel tolerance is during validation.">Cr multiplier</label>
+            <input type="number" id="ycbcr_cr" data-field="ycbcr_cr" min="0" max="10" step="0.01">
+          </div>
+        </div>
+        <div class="field">
+          <label class="check"><input type="checkbox" data-field="ycbcr_per_block"> YCbCr per block (with RGB band numbers)</label>
+        </div>
+      </section>
+
+      <details class="card">
+        <summary><h2>Advanced</h2></summary>
+        <div class="grid-2">
+          <div class="field">
+            <span class="label" data-help="Extra search and validation heuristics can improve compression quality but may increase compute time.">Search</span>
+            <label class="check"><input type="checkbox" id="advanced_heuristic" data-field="advanced_heuristic"> Advanced heuristic (heuristic backend only)</label>
+            <label class="check"><input type="checkbox" data-field="accept_prediction"> Accept prediction if within accuracy</label>
+            <label class="check"><input type="checkbox" data-field="incremental_backscan"> Incremental backscan</label>
+            <label class="check"><input type="checkbox" data-field="l2_precheck"> L2 precheck</label>
+            <label class="check"><input type="checkbox" data-field="verify_full_idct"> Verify with full IDCT</label>
+          </div>
+          <div class="field">
+            <label class="label" for="minimize_backscan" data-help="Limit the amount of backscan searching. Useful for balancing speed and output quality.">Minimize backscan</label>
+            <input type="number" id="minimize_backscan" data-field="minimize_backscan" min="0" max="1000" step="1">
+            <label class="label" for="backscan_break_after" data-help="Stop backscan after a certain number of checks when a valid result has already been found.">Backscan break after</label>
+            <input type="number" id="backscan_break_after" data-field="backscan_break_after" min="0" max="100" step="1">
+            <label class="label" for="decimal_places" data-help="Number of decimal places kept in numeric output when writing compressed results.">Decimal places</label>
+            <input type="number" id="decimal_places" data-field="decimal_places" min="0" max="6" step="1">
+          </div>
+          <div class="field">
+            <label class="label" for="processes" data-help="Number of CPU worker processes to use for each compression job.">Processes (CPU)</label>
+            <input type="number" id="processes" data-field="processes" min="1" step="1">
+          </div>
+          <div class="field">
+            <label class="label" for="gpu" data-help="auto: use the GPU when it is found, otherwise the CPU. on: require the GPU. off: CPU only.">GPU</label>
+            <select id="gpu" data-field="gpu">
+              <option value="auto">auto</option>
+              <option value="on">on</option>
+              <option value="off">off</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="files_parallel" data-help="How many files can be processed at the same time. This is useful when running bulk jobs.">Files at the same time</label>
+            <input type="number" id="files_parallel" data-field="files_parallel" min="1" step="1">
+            <p class="hint">Processes are shared between the files being processed.</p>
+          </div>
+          <div class="field">
+            <label class="label" for="compression_method" data-help="Compression algorithm used when creating .7z archives for output packages.">Archive method (.7z)</label>
+            <select id="compression_method" data-field="compression_method">
+              <option value="LZMA2">LZMA2</option>
+              <option value="PPMD">PPMD</option>
+              <option value="BZIP2">BZIP2</option>
+              <option value="DEFLATE">DEFLATE</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="lzma2_block_size" data-help="LZMA2 block (chunk) size of the .7z archive, e.g. 1m, 2m, 4m. 7-Zip compresses the blocks in parallel, so smaller blocks are much faster with nearly the same size. Empty = 7-Zip default; only used with the LZMA2 archive method.">LZMA2 block size (.7z)</label>
+            <input id="lzma2_block_size" data-field="lzma2_block_size" list="lzma2_sizes" placeholder="empty = 7-Zip default">
+            <datalist id="lzma2_sizes">
+              <option value="512k"></option>
+              <option value="1m"></option>
+              <option value="2m"></option>
+              <option value="4m"></option>
+              <option value="8m"></option>
+            </datalist>
+          </div>
+          <div class="field">
+            <label class="label" for="tiff_compression" data-help="Compression algorithm used when writing decoded TIFF output. Choose NONE for uncompressed TIFF files.">TIFF compression (decoded output)</label>
+            <select id="tiff_compression" data-field="tiff_compression">
+              <option value="DEFLATE">DEFLATE</option>
+              <option value="LZW">LZW</option>
+              <option value="LZMA">LZMA</option>
+              <option value="ZSTD">ZSTD</option>
+              <option value="NONE">NONE</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="crs" data-help="Coordinate reference system (CRS) to assign to the output. If left empty, the source CRS is reused automatically.">CRS of the output (empty = CRS of the input)</label>
+            <input type="text" id="crs" data-field="crs" autocomplete="off" list="crs-list" placeholder="epsg:2180">
+            <datalist id="crs-list">
+              <option value="epsg:2180"></option>
+              <option value="epsg:4326"></option>
+              <option value="epsg:3857"></option>
+              <option value="epsg:32633"></option>
+              <option value="epsg:32634"></option>
+            </datalist>
+            <label class="check"><input type="checkbox" data-field="no_crs"> No CRS (plain grid)</label>
+          </div>
+          <div class="field">
+            <span class="label" data-help="Delete temporary working files after processing ends to keep the output folder clean.">Temporary files</span>
+            <label class="check"><input type="checkbox" data-field="delete_temp"> Delete temporary files</label>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <div class="column form-col" data-panel="interpolate" hidden>
+      {% include "_interp_panel.html" %}
+    </div>
+
+    <div class="column form-col" data-panel="tests" hidden>
+      {% if not tests.available %}
+      <section class="card"><p class="hint">Test suite not found — <code>analysis/tests/run_tests.py</code> is missing.</p></section>
+      {% endif %}
+      <section class="card">
+        <h2>Datasets</h2>
+        <div id="t-datasets"></div>
+        <button type="button" class="button secondary" id="t-add-ds">+ Add dataset</button>
+        <p class="hint">Point each dataset at a folder with <code>.tif</code>/<code>.png</code> files (top level). <b>Scan</b> probes the files and fills the parameters; you can adjust them freely. Rows are remembered after a run.</p>
+      </section>
+      <section class="card">
+        <h2>Variants</h2>
+        <div class="field">
+          {% for v in tests.variants %}
+          <label class="check"><input type="checkbox" data-field="t_variants" data-list value="{{ v }}" checked> {{ v }}</label>
+          {% endfor %}
+        </div>
+      </section>
+      <section class="card">
+        <h2>Run options</h2>
+        <div class="grid-2">
+          <div class="field">
+            <label class="label" for="t_max_files" data-help="How many of the first files of each dataset to test, or 'all' for the whole dataset.">Files per dataset</label>
+            <input type="text" id="t_max_files" data-field="t_max_files" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label class="label" for="t_workers" data-help="Number of test combinations running in parallel (threads).">Workers</label>
+            <input type="number" id="t_workers" data-field="t_workers" min="1">
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" data-field="t_resume" data-help="Skip combinations already present in the results CSVs."> Resume (skip finished combinations)</label>
+        <label class="check"><input type="checkbox" data-field="t_dry_run" data-help="Print the work plan to the log without running any computation."> Dry-run (plan only)</label>
+      </section>
+      <section class="card">
+        <h2>Environment</h2>
+        <div id="tests-env" class="hint">Checking the test environment…</div>
+        <p class="hint"><a href="/tests/results" target="_blank">Results page</a> — <code>results_&lt;dataset&gt;.csv</code> and <code>features.csv</code>.</p>
+      </section>
+    </div>
+
+    <div class="side">
+      <section class="card run-panel">
+        <div class="run-buttons">
+          <button type="button" class="button primary big" id="run">Run</button>
+          <button type="button" class="button danger big" id="stop" disabled>Stop</button>
+        </div>
+        <div class="progress" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-bar" id="bar"></div>
+        </div>
+        <p class="status-line" id="status-line">Idle</p>
+        <p class="error-line" id="error-line" hidden></p>
+      </section>
+
+      <section class="card results-panel">
+        <h2>Results</h2>
+        <div class="table-wrap">
+          <table class="results">
+            <thead>
+              <tr><th>Input</th><th>Output</th><th>Check</th><th>Size in → out</th><th>Ratio</th></tr>
+            </thead>
+            <tbody id="results"></tbody>
+          </table>
+        </div>
+        <p class="hint" id="results-empty">No results yet.</p>
+      </section>
+
+      <section class="card log-panel">
+        <div class="card-head">
+          <h2>Log</h2>
+          <button type="button" class="button secondary small" id="clear-log">Clear</button>
+        </div>
+        <pre class="log" id="log" aria-live="polite"></pre>
+      </section>
+    </div>
+  </main>
+
+  <div class="modal" id="browser" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="browser-title">
+      <div class="modal-head">
+        <h2 id="browser-title">Choose a folder</h2>
+        <button type="button" class="button secondary small" id="browser-close">Close</button>
+      </div>
+      <p class="path" id="browser-path"></p>
+      <div class="browser-actions">
+        <button type="button" class="button secondary small" id="browser-up">Up</button>
+        <button type="button" class="button primary small" id="browser-use">Use this folder</button>
+      </div>
+      <p class="error-line" id="browser-error" hidden></p>
+      <ul class="entries" id="browser-entries"></ul>
+    </div>
+  </div>
+
+  <script id="initial" type="application/json">{{ initial|tojson }}</script>
+  <script src="{{ url_for('static', filename='app.js', v=asset_v) }}"></script>
+  <script src="{{ url_for('static', filename='interp.js', v=asset_v) }}"></script>
+  <script src="{{ url_for('static', filename='tests.js', v=asset_v) }}"></script>
+</body>
+</html>

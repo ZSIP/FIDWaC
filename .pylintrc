@@ -1,0 +1,39 @@
+[MASTER]
+init-hook='import sys, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))'
+
+[BASIC]
+good-names=i,j,k,ex,Run,_,H,W,Y,Cb,Cr,pad_H,pad_W,padded_H,padded_W,Y_p,Cb_p,Cr_p,r_p,g_p,b_p,r_blk,g_blk,b_blk,sH,sW,TJPF_RGB,TJSAMP_420,TJFLAG_OPTIMIZE,_SERIAL_THRESHOLD
+
+[MESSAGES CONTROL]
+disable=
+    C0111,  # missing-docstring
+    C0116,  # missing-function-docstring (new code for C0111)
+    C0115,  # missing-class-docstring
+    C0103,  # invalid-name (H, W, Y, Cb, Cr, pad_H, pad_W, padded_H, padded_W standard in image processing)
+    R0913,  # too-many-arguments
+    R0914,  # too-many-locals
+    R0915,  # too-many-statements
+    C0301,  # line-too-long
+    E0401,  # import-error (external libs not in pylint env - works at runtime)
+    E1101,  # no-member (dynamic attribute access)
+    E0611,  # no-name-in-module (external lib issue)
+    E0606,  # possibly-used-before-assignment (false positive)
+    C0413,  # wrong-import-position (intentional: os.environ before numpy imports)
+    W0621,  # redefined-outer-name (intentional local imports for circular deps)
+    W0404,  # reimported (intentional local imports for circular deps)
+    W0212,  # protected-access (intentional _scaling_factor_override)
+    C0415,  # import-outside-toplevel (intentional for circular imports)
+    W0718,  # broad-exception-caught (error handling)
+    R0903,  # too-few-public-methods (cosmetic - simple classes)
+    R0902,  # too-many-instance-attributes (cosmetic - config classes)
+    R1702,  # too-many-nested-blocks (cosmetic - complex logic)
+    R0917,  # too-many-positional-arguments (complex function signatures)
+    R1731,  # consider-using-max-builtin (cosmetic)
+    R0912,  # too-many-branches (complex logic)
+    R1714,  # consider-using-in (cosmetic)
+    C0302,  # too-many-lines (cosmetic - large modules)
+    W0640,  # cell-var-from-loop (cosmetic - closure behavior)
+    W0641,  # possibly-unused-variable (cosmetic - false positive)
+    R1730,  # consider-using-min-builtin (cosmetic)
+    R1716,  # chained-comparison (cosmetic)
+    W0603,  # global-statement (intentional for debug counters)

@@ -1,0 +1,132 @@
+      <section class="card">
+        <h2>Points and output</h2>
+        <div class="field">
+          <span class="label" data-help="Interpolate one point file, or every point file (TXT, CSV, LAS, LAZ, SHP) inside a folder and its subfolders.">Input type</span>
+          <div class="choice-row">
+            <label class="check"><input type="radio" name="ip_input_type" value="file" data-field="ip_input_type"> Single point file</label>
+            <label class="check"><input type="radio" name="ip_input_type" value="directory" data-field="ip_input_type"> Folder (with subfolders)</label>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label" for="ip_input_path" data-help="Point file or folder to interpolate. For a folder, the subfolder structure is repeated in the output folder.">Input path</label>
+          <div class="with-button">
+            <input type="text" id="ip_input_path" data-field="ip_input_path" autocomplete="off" spellcheck="false" placeholder="/mnt/g/data/points.las">
+            <button type="button" class="button secondary" data-browse="ip_input_path" data-browse-type="ip_input_type" data-browse-mode="points">Browse…</button>
+          </div>
+          <p class="hint" id="ip-input-hint"></p>
+        </div>
+        <div class="field">
+          <label class="label" for="ip_output_dir" data-help="Folder for the GeoTIFF and the optional extra outputs. The compressed package is written here as well when the pipeline includes compression.">Output folder</label>
+          <div class="with-button">
+            <input type="text" id="ip_output_dir" data-field="ip_output_dir" autocomplete="off" spellcheck="false">
+            <button type="button" class="button secondary" data-browse="ip_output_dir">Browse…</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label" data-help="Interpolation only writes the GeoTIFF. Interpolation and compression also writes a .7z package, using the method and accuracy of the Compression tab.">Pipeline</span>
+          <div class="choice-row">
+            <label class="check"><input type="radio" name="ip_pipeline" value="interp_only" data-field="ip_pipeline"> Interpolation only</label>
+            <label class="check"><input type="radio" name="ip_pipeline" value="interp_compress" data-field="ip_pipeline"> Interpolation and compression</label>
+          </div>
+          <p class="hint" id="ip-compress-summary"></p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>IDW parameters</h2>
+        <div class="grid-2">
+          <div class="field">
+            <label class="label" for="ip_neighbours" data-help="Number of nearest input points used for each grid cell. A cell with no point inside the maximum distance stays NoData.">Neighbours (N)</label>
+            <input type="number" id="ip_neighbours" data-field="ip_neighbours" min="1" max="500" step="1">
+          </div>
+          <div class="field">
+            <label class="label" for="ip_resolution" data-help="Grid cell size in the units of the input coordinates (metres for EPSG:2180).">Cell size (resolution)</label>
+            <input type="number" id="ip_resolution" data-field="ip_resolution" min="0.000001" step="any">
+          </div>
+          <div class="field">
+            <label class="label" for="ip_max_distance" data-help="Input points farther than this from a grid cell are not used for that cell.">Maximum distance</label>
+            <input type="number" id="ip_max_distance" data-field="ip_max_distance" min="0.000001" step="any">
+          </div>
+          <div class="field">
+            <label class="label" for="ip_weights" data-help="Power p of the distance weights (weight = 1 / d^p). Higher values give the nearest points more influence.">Weight power (p)</label>
+            <input type="number" id="ip_weights" data-field="ip_weights" min="0.1" max="10" step="0.1">
+          </div>
+          <div class="field">
+            <label class="label" for="ip_leafsize" data-help="Leaf size of the KD-tree used for the neighbour search. It changes the speed, not the result.">KD-tree leaf size</label>
+            <input type="number" id="ip_leafsize" data-field="ip_leafsize" min="1" step="1">
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <span class="label" data-help="Gaussian smoothing of the interpolated grid, as in the original FIDWaC. NoData spreads into neighbouring cells.">Smoothing</span>
+            <label class="check"><input type="checkbox" id="ip_smooth" data-field="ip_smooth"> Smooth the result</label>
+            <label class="label" for="ip_smooth_level" data-help="Sigma of the Gaussian filter, in cells. Used only when smoothing is on.">Smoothing level (sigma, cells)</label>
+            <input type="number" id="ip_smooth_level" data-field="ip_smooth_level" data-enabled-by="ip_smooth" min="0.1" max="20" step="0.1">
+          </div>
+          <div class="field">
+            <span class="label" data-help="Original FIDWaC rule: distances below r_min are replaced by half of the smallest distance above r_min.">Close points (r_min)</span>
+            <label class="check"><input type="checkbox" id="ip_r_min_function" data-field="ip_r_min_function"> Reduce distances below r_min</label>
+            <label class="label" for="ip_r_min" data-help="Threshold for the rule above. Used only when the option is on.">r_min (m)</label>
+            <input type="number" id="ip_r_min" data-field="ip_r_min" data-enabled-by="ip_r_min_function" min="0" step="any">
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Input points</h2>
+        <div class="grid-2">
+          <div class="field">
+            <span class="label" data-help="Keep only points of the selected LAS and LAZ classes (ASPRS codes, for example 2 = ground). Other classes are ignored.">LAS and LAZ classes</span>
+            <label class="check"><input type="checkbox" id="ip_las_filter" data-field="ip_las_filter"> Use only the selected classes</label>
+            <input type="text" id="ip_las_classes" data-field="ip_las_classes" data-enabled-by="ip_las_filter" autocomplete="off" placeholder="2,6" aria-label="LAS classes, comma separated">
+            <p class="hint">Comma-separated ASPRS codes, for example 2 for ground.</p>
+          </div>
+          <div class="field">
+            <label class="label" for="ip_z_field" data-help="Name of the attribute that holds the height in SHP files. The other formats do not use it.">Height attribute (SHP)</label>
+            <input type="text" id="ip_z_field" data-field="ip_z_field" autocomplete="off" placeholder="z">
+            <p class="hint">TXT and CSV: one header line, then x, y, z in the first three columns.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Geoid correction</h2>
+        <div class="field">
+          <label class="check"><input type="checkbox" id="ip_geoid" data-field="ip_geoid"> Subtract the geoid undulation from heights</label>
+          <p class="hint">Converts ellipsoidal heights to heights above the geoid. The model path is always shown; it is used only while this option is on.</p>
+        </div>
+        <div class="field">
+          <label class="label" for="ip_geoid_file" data-help="Geoid grid as a .7z archive holding a CSV of lon, lat, undulation, or as a plain .csv or .txt file. Relative paths start in the project folder.">Geoid model file (path)</label>
+          <div class="with-button">
+            <input type="text" id="ip_geoid_file" data-field="ip_geoid_file" autocomplete="off" spellcheck="false" placeholder="interpolation/geoid/PL_geod.7z">
+            <button type="button" class="button secondary" data-browse="ip_geoid_file" data-browse-mode="geoid">Browse…</button>
+            <button type="button" class="button secondary" id="ip-geoid-reset" title="Use the geoid model that ships with FIDWAC">Bundled model</button>
+          </div>
+          <p class="hint" id="ip-geoid-hint" aria-live="polite"></p>
+        </div>
+        <div class="grid-3">
+          <div class="field">
+            <label class="label" for="ip_source_crs" data-help="CRS of the input coordinates. They are transformed to the geoid CRS before the lookup.">Input CRS</label>
+            <input type="text" id="ip_source_crs" data-field="ip_source_crs" data-enabled-by="ip_geoid" autocomplete="off" list="crs-list" placeholder="epsg:2180">
+          </div>
+          <div class="field">
+            <label class="label" for="ip_geoid_crs" data-help="CRS of the geoid grid. The bundled model uses WGS 84 longitude and latitude.">Geoid CRS</label>
+            <input type="text" id="ip_geoid_crs" data-field="ip_geoid_crs" data-enabled-by="ip_geoid" autocomplete="off" list="crs-list" placeholder="epsg:4326">
+          </div>
+          <div class="field">
+            <label class="label" for="ip_geoid_max_distance" data-help="Points farther than this from the nearest geoid grid point are not corrected.">Max distance to geoid point (m)</label>
+            <input type="number" id="ip_geoid_max_distance" data-field="ip_geoid_max_distance" data-enabled-by="ip_geoid" min="1" step="any">
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Extra outputs</h2>
+        <p class="hint">The GeoTIFF is always written.</p>
+        <div class="choice-row">
+          <label class="check"><input type="checkbox" data-field="ip_csv"> CSV (x, y, value)</label>
+          <label class="check"><input type="checkbox" data-field="ip_surfer"> Surfer grid (.grd)</label>
+          <label class="check"><input type="checkbox" data-field="ip_shp"> Points shapefile (.shp)</label>
+          <label class="check"><input type="checkbox" data-field="ip_png"> PNG preview</label>
+        </div>
+      </section>
