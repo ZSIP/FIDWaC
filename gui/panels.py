@@ -202,13 +202,15 @@ class GUIPanels:
         )
         float_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 4))
         float_frame.columnconfigure(1, weight=1)
+        float_frame.columnconfigure(2, weight=1)
 
         # Accuracy: slider, typed value (spinbox) and quick buttons share one variable
         ttk.Label(float_frame, text="Accuracy (float):").grid(row=0, column=0, sticky=tk.W, pady=3)
         self.accuracy = tk.DoubleVar(value=cfg.compression.accuracy)
         self._acc_text = tk.StringVar(value=f"{cfg.compression.accuracy:.3f}")
         acc_frame = ttk.Frame(float_frame)
-        acc_frame.grid(row=0, column=1, sticky=tk.W)
+        acc_frame.grid(row=0, column=1, columnspan=2, sticky=(tk.W, tk.E))
+        acc_frame.columnconfigure(0, weight=1)
         _tip(
             ttk.Scale(
                 acc_frame,
@@ -216,11 +218,11 @@ class GUIPanels:
                 to=1.0,
                 orient=tk.HORIZONTAL,
                 variable=self.accuracy,
-                length=200,
+                length=120,
                 command=lambda v: self._acc_text.set(f"{float(v):.3f}"),
             ),
             "accuracy",
-        ).grid(row=0, column=0, sticky=tk.W)
+        ).grid(row=0, column=0, sticky=(tk.W, tk.E))
         self._acc_spin = _tip(
             ttk.Spinbox(
                 acc_frame,
@@ -234,7 +236,7 @@ class GUIPanels:
             ),
             "accuracy",
         )
-        self._acc_spin.grid(row=0, column=1, sticky=tk.W, padx=4)
+        self._acc_spin.grid(row=0, column=1, sticky=tk.E, padx=(8, 0))
         self._acc_spin.bind("<Return>", lambda _e: self._commit_accuracy())
         self._acc_spin.bind("<FocusOut>", lambda _e: self._commit_accuracy())
         self._acc_text.trace_add("write", lambda *_a: self._follow_typed_accuracy())
@@ -247,8 +249,9 @@ class GUIPanels:
                 preset_frame,
                 text=label,
                 width=5,
+                style="Preset.TButton",
                 command=lambda v=val: self.set_accuracy(v),
-            ).pack(side=tk.LEFT, padx=1)
+            ).pack(side=tk.LEFT, padx=(0, 3))
 
         ttk.Label(float_frame, text="Method:").grid(row=1, column=0, sticky=tk.W, pady=3)
         self.method = tk.StringVar(value=getattr(cfg.compression, "method", "dct"))
@@ -269,13 +272,13 @@ class GUIPanels:
             text="dct = standard / pred = cm=7 / sz3 = external cm=8",
             foreground="gray",
             font=("TkDefaultFont", 8),
-        ).grid(row=1, column=2, sticky=tk.W, padx=(10, 0))
+        ).grid(row=2, column=1, columnspan=2, sticky=tk.W)
 
-        ttk.Label(float_frame, text="Block size:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        ttk.Label(float_frame, text="Block size:").grid(row=3, column=0, sticky=tk.W, pady=3)
         self.block_size = tk.StringVar(value=str(cfg.compression.block_size))
         self.auto_select = tk.BooleanVar(value=cfg.compression.auto_select_block_size)
         bs_frame = ttk.Frame(float_frame)
-        bs_frame.grid(row=2, column=1, sticky=tk.W)
+        bs_frame.grid(row=3, column=1, columnspan=2, sticky=tk.W)
         self._block_size_cb = _tip(
             ttk.Combobox(
                 bs_frame,
@@ -298,7 +301,7 @@ class GUIPanels:
         ).pack(side=tk.LEFT, padx=10)
         self._on_auto_select_change()
 
-        ttk.Label(float_frame, text="Backend:").grid(row=3, column=0, sticky=tk.W, pady=3)
+        ttk.Label(float_frame, text="Backend:").grid(row=4, column=0, sticky=tk.W, pady=3)
         self.backend = tk.StringVar(value=cfg.model.backend)
         self._backend_cb = _tip(
             ttk.Combobox(
@@ -310,7 +313,7 @@ class GUIPanels:
             ),
             "backend",
         )
-        self._backend_cb.grid(row=3, column=1, sticky=tk.W, pady=3)
+        self._backend_cb.grid(row=4, column=1, sticky=tk.W, pady=3)
         self._backend_cb.bind("<<ComboboxSelected>>", self._on_backend_change)
 
     def _build_uint8_section(self, parent, cfg):

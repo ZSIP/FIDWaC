@@ -72,6 +72,8 @@ def apply_theme(root):
         foreground=[("disabled", "#ECEFF1")],
     )
 
+    style.configure("Preset.TButton", padding=[4, 2], font=("TkDefaultFont", 9, "bold"))
+
     style.configure(
         "Run.TButton",
         background=C_SUCCESS,
