@@ -4,6 +4,7 @@
 
 - [Compression Modes (cm)](#compression-modes-cm)
 - [Abstract](#abstract)
+- [Batched uint8 path (cm=5/cm=6), GPU and L prediction](#batched-uint8-path-cm5cm6-gpu-and-l-prediction)
 - [System Requirements and Installation](#system-requirements-and-installation)
   - [System Requirements](#system-requirements)
   - [Full Installation Guide](#full-installation-guide)
@@ -42,19 +43,20 @@ FIDWAC v2 selects the compression mode automatically based on data type and flag
 
 | cm | Mode | Input data | Error guarantee | How to select |
 |----|------|------------|-----------------|---------------|
-| 1 | TurboJPEG (quality) | uint8, exactly 3 RGB bands | none (JPEG quality parameter) | 3-band uint8 with `--no-uint8-accuracy-mode` (the shipped `config.json` has `uint8_accuracy_mode: true`, so without this flag RGB goes to cm=6) |
-| 3 | DCT + DC predictor | float32/float64 (DEM/DTM), int16 | max error ≤ ε in raster units | `--method dct` + `--accuracy` (default for float) |
-| 4 | Lossless PNG Sub + zlib | uint8, any number of bands | error = 0 (lossless) | `--lossless` (takes precedence over cm=5 and cm=6) |
-| 5 | DCT integer per band | uint8 / int8 / uint16 / int16 | max error ≤ ε per band | `--uint8-accuracy` |
-| 6 | Per-block YCbCr | uint8, ≥3 RGB bands | max error ≤ ε in RGB space | `--uint8-accuracy` + `--ycbcr-per-block` |
-| 7 | Predictive MED (near-lossless) | float/int, per band | max error ≤ bound (`.fpred`) | `--method pred` |
-| 8 | SZ3 (external) | float/int, per band | max error ≤ SZ3 ABS bound (`.sz3`) | `--method sz3` (requires `pysz`) |
+| 1 | TurboJPEG (quality) | uint8, exactly 3 RGB bands | none (JPEG quality parameter) | 3-band uint8 with `--no-uint8-accuracy-mode` (the shipped `config.json` has `uint8_accuracy_mode: true`, so without this flag RGB goes to cm=6); other integer rasters with this flag are refused |
+| 3 | DCT + DC predictor | float32/float64 only (DEM/DTM) | max error ≤ ε in raster units | `--method dct` + `--accuracy` (default for float) |
+| 4 | Lossless (data stored unchanged) | any type: 3-band uint8 RGB as PNG + world file, everything else as GeoTIFF | error = 0 (lossless) | `--lossless` (takes precedence over all other modes) |
+| 5 | DCT integer per band | all integer types: uint8 / int8 / uint16 / int16 | max error ≤ ε per band, ε = `--uint8-accuracy` (raster units) | accuracy mode (`uint8_accuracy_mode`, on in the shipped `config.json`) + `--uint8-accuracy` |
+| 6 | Per-block YCbCr | uint8, ≥3 RGB bands | max error ≤ ε in RGB space | accuracy mode + `--uint8-accuracy` + `--ycbcr-per-block` (RGB bands from `--rgb-channel-indices`, default `1,2,3`) |
+| 7 | Predictive MED (near-lossless) | float/int, per band | max error ≤ bound (`.fpred`); integer bands use `--uint8-accuracy` in accuracy mode | `--method pred` |
+| 8 | SZ3 (external) | float/int, per band | max error ≤ SZ3 ABS bound (`.sz3`); integer bands use `--uint8-accuracy` in accuracy mode | `--method sz3` (requires `pysz`) |
 | 0 | Legacy VLQ | old archives | — | decode only, detected automatically |
 
 Notes:
 
 - cm=1 uses a different archive layout (`rgb.bin` + `meta.msgpack`), not the `cm` msgpack field.
 - In cm=6 only the 3 RGB bands go through the YCbCr path; remaining bands in the same archive are encoded as cm=5.
+- Routing by data type: float bands go to cm=3 with `--accuracy`; integer bands go to cm=5 (or cm=6 for 3 uint8 RGB bands with `--ycbcr-per-block`) with `--uint8-accuracy`. A raster that mixes float and integer bands uses both bounds, each for its own bands.
 - The decoder detects the format automatically from the archive contents — no mode flag is needed for decompression.
 - The code cm=2 is unused.
 
@@ -66,11 +68,11 @@ FIDWAC v2 (Fast Inverse Distance Weighting and Compression, version 2) is the ne
 
 Version 2 adds Numba JIT acceleration for key mathematical operations, faster block indexing, a hybrid search algorithm with incremental error reconstruction, two graphical user interfaces (a Flask web GUI and a Tkinter desktop GUI), IDW interpolation of scattered points, and five core processing paths for UINT8/INT8/FLOAT data:
 
-1. **DCT compression for elevation data (float32/int16)** - intended for single-channel continuous data such as DEM/DTM models or IDW interpolation grids. It guarantees a maximum error <= epsilon in the original units (metres, centimetres). It uses a DC Median predictor with separate DC/AC streams (`cm=3`).
-2. **Standard DCT compression (uint8 accuracy)** - intended for single-channel images such as LiDAR intensity, hillshade, or individual raster bands. It guarantees a maximum error <= epsilon in grayscale values (0-255), without colour-space conversion (`cm=5`).
+1. **DCT compression for elevation data (float32/float64)** - intended for single-channel continuous data such as DEM/DTM models or IDW interpolation grids. It guarantees a maximum error <= epsilon in the original units (metres, centimetres). It uses a DC Median predictor with separate DC/AC streams (`cm=3`).
+2. **Standard DCT compression for integer bands (uint8 accuracy)** - intended for single-channel images such as LiDAR intensity, hillshade, or individual raster bands, and for every other integer band (int8, uint16, int16). It guarantees a maximum error <= epsilon in pixel values (`--uint8-accuracy`), without colour-space conversion (`cm=5`).
 3. **Per-block YCbCr with cascading multipliers** - intended for multi-channel RGB imagery in accuracy mode. It guarantees a maximum error <= epsilon in RGB space by using block-wise fitting of coefficients and exact decoder-side RGB verification (`cm=6`).
 4. **TurboJPEG (SIMD)** - an alternative fast RGB path without accuracy mode, based on JPEG quality settings. It uses standard JPEG compression through libjpeg-turbo and does not provide a formal maximum-approximation-error guarantee. This is a very fast file-packing method, but it can introduce excessive uncontrolled noise. It does not provide a single-channel mode or a multi-channel mode for more than 3 RGB channels (`cm=1` with `meta.msgpack`).
-5. **Lossless compression** - intended for uint8 data requiring exact reconstruction (`max error = 0`). It uses a PNG Sub filter followed by zlib deflate. Every band is coded separately, so it works for one band as well as for any number of bands, and `--lossless` takes precedence over the accuracy modes (`cm=4`).
+5. **Lossless mode** (`cm=4`, `--lossless`) - stores the raster without any change of values (`max error = 0`): 3-band uint8 RGB as PNG with a world file (`.pgw`), every other raster (float, int8/int16/uint16, uint8 with 1 or 4 and more bands) as GeoTIFF with DEFLATE and a predictor, packed into `.7z` together with the CRS, transform and NoData. **This mode only brings the data into the FIDWAC archive format; it does not compress them in the FIDWAC sense.** The size reduction is that of PNG / DEFLATE and is small, or none when the input file is already compressed: for an RGB PNG the archive holds practically the same PNG as the input, only with the georeferencing. For real size reduction use the DCT modes with an error bound.
 
 In addition to the default DCT/JPEG/Lossless routing (`--method dct`), FIDWAC v2 exposes two explicit alternative/benchmark modes selectable via CLI (`--method pred|sz3`) and the web GUI:
 
@@ -136,12 +138,12 @@ The array path runs on CPU and GPU (`engine/u8_lockstep.py`, `accept_predicted`)
 
 The measurements ran on a server with 32 cores and 314 GB RAM. Limiting to 4 cores imitates a slower processor, not a laptop's memory. The predictor is an option for weaker hardware, not the default: on a machine with a GPU, binary search still gives the smallest files.
 
-### Results (branch version, checked on `main`)
+### Results
 
 - File 1 at accuracy 2: GPU and CPU give the identical file (768,067 B), error <= 2 in every band, tag VT.
 - 20 files at accuracy 2 (reference set `multi_uint_6ch_auto_2px`): total size +0.002% against the reference; size not larger in 12 of 20 files (the rest differ by at most 0.2%); error <= 2 in 20 of 20.
 - 10 files at accuracy 5: sizes identical to the production version before these changes (10 of 10).
-- Time, 10 files at accuracy 2, 8 processes: GPU about 9-10 s, CPU about 12-13 s. One file: GPU about 4.8 s, CPU about 5.6 s. Production: about 55-90 s per file (measured on an idle machine).
+- Time, 10 files at accuracy 2, 8 processes: GPU about 9-10 s, CPU about 12-13 s. One file: GPU about 4.8 s, CPU about 5.6 s. The earlier per-block version: about 55-90 s per file (measured on an idle machine).
 - CPU time (user + system), batch of 10 files, 8 processes, median of 5 runs: before the change 90.2 s, after it 75.5 s (about 16% less). CPU time is less sensitive to machine load than wall-clock time; it also includes waiting for the GPU, which is the same in both versions. Wall-clock time did not change measurably.
 
 ### Limitations
@@ -188,7 +190,7 @@ The measurements ran on a server with 32 cores and 314 GB RAM. Limiting to 4 cor
   - `sevenzip` (provides `7zz`; this is the upstream 7-Zip build, the zstd fork has no macOS build)
 - Xcode Command Line Tools: `xcode-select --install`
 
-**RAM:** minimum 2 GB; for large rasters see "Memory use and file size" below
+**RAM:** 4 GB or more (a 5120 × 5120 RGB orthophoto needs about 2.3 GB during compression); for large rasters see "Memory use and file size" below
 **Disk space:** minimum 500 MB (+ space for processed raster files)
 
 #### Memory use and file size
@@ -214,7 +216,7 @@ Compression time grows in proportion to the number of pixels (for example RGB 12
 
 - Strip size: about 8 million pixels per strip for `cm=6`, 16 million for `cm=5` (`RGB_STRIP_PIXELS` and `DCT_STRIP_PIXELS` in `compress/compression_dct.py`). A band of at most 16 million pixels is processed whole, as before.
 - **Automatic block size** (`--auto`) on a band above 16 million pixels is chosen from a window of up to 2048 x 2048 pixels in the middle of the band, not from the whole band, so on such bands it can differ from the choice for the whole image. With a fixed `--block-size` there is no difference.
-- **Modes that still read a whole band into memory:** lossless (`cm=4`) and `--method pred` / `--method sz3` (`cm=7`, `cm=8`). RGB without `--ycbcr-per-block` is compressed band by band as `cm=5`, so it works in strips. For very large rasters (hundreds of millions of pixels) in the three modes above, split the raster into tiles before compression; each tile keeps its own georeferencing, so the tiles can be mosaicked again afterwards. Memory use of these modes was not measured.
+- **Modes that still read a whole band into memory:** lossless PNG (`cm=4`, 3-band uint8 RGB; the GeoTIFF variant is written in strips) and `--method pred` / `--method sz3` (`cm=7`, `cm=8`). RGB without `--ycbcr-per-block` is compressed band by band as `cm=5`, so it works in strips. For very large rasters (hundreds of millions of pixels) in the three modes above, split the raster into tiles before compression; each tile keeps its own georeferencing, so the tiles can be mosaicked again afterwards. Memory use of these modes was not measured.
 - **What still grows with the content:** the stored coefficients are collected in memory before the archive is written, and read back in memory on decompression. Their number is the number of kept DCT coefficients, so it is higher for images that compress badly. The 548 million pixel orthophoto above keeps 0.69 coefficients per pixel (377 million in total, compression 1.2x) and needed about 30 bytes per stored coefficient in both directions (10 to 11 GB). An image that compresses well needs less. The test images in the first rows were made by repeating one orthophoto, so their archives are much smaller than for a real image of that size (the archiver finds the repeats); the number of stored coefficients per pixel is that of the original orthophoto.
 - Memory use also grows with the number of worker processes; it was measured only at the default setting.
 
@@ -250,7 +252,7 @@ The 7-Zip-ZSTD binary is not stored in this repository: `install/setup_linux.sh`
 | CMake | Building libjpeg-turbo and SZ3 (build time) | https://github.com/Kitware/CMake | BSD-3-Clause |
 | GDAL | Raster I/O (bundled in rasterio wheels; system packages `libgdal-dev`, `gdal-devel`, `gdal`) | https://github.com/OSGeo/gdal | MIT-style (components listed in `LICENSE.TXT`) |
 | LLVM | `llvm-dev` installed by the installer (build time) | https://github.com/llvm/llvm-project | Apache-2.0 with LLVM Exceptions |
-| Python | Interpreter, 3.10 or newer | https://github.com/python/cpython | Python Software Foundation License 2.0 |
+| Python | Interpreter, 3.9 or newer on Linux, 3.10 or newer on macOS | https://github.com/python/cpython | Python Software Foundation License 2.0 |
 | ZSIP/FIDWaC (IDW algorithm) | Original interpolation algorithm, adapted in `interpolation/` (copyright notice kept in `interpolation/idw.py`) | https://github.com/ZSIP/FIDWaC | MIT |
 | Geoid model PL, WGS 84 grid 0.01° (`interpolation/geoid/PL_geod.7z`) | Optional geoid correction of interpolated elevations (`--geoid`) | — (data, not a repository) | To be confirmed by the author before publication: the archive does not state its source or licence |
 
@@ -272,7 +274,7 @@ The 7-Zip-ZSTD binary is not stored in this repository: `install/setup_linux.sh`
 | PyTurboJPEG | Python wrapper for libjpeg-turbo | https://github.com/lilohuang/PyTurboJPEG | MIT |
 | Flask | Web GUI (`app.py`) | https://github.com/pallets/flask | BSD-3-Clause |
 | Werkzeug | WSGI layer of Flask (installed with Flask) | https://github.com/pallets/werkzeug | BSD-3-Clause |
-| PyInstaller | Windows executable build (`build_windows.bat`, optional) | https://github.com/pyinstaller/pyinstaller | GPL-2.0-or-later with a special exception that allows bundling |
+| PyInstaller | Optional build of a standalone executable (listed in `install/requirements.txt`; no build script is shipped) | https://github.com/pyinstaller/pyinstaller | GPL-2.0-or-later with a special exception that allows bundling |
 
 The web GUI front end (HTML, CSS and JavaScript) is written for this project and uses no third-party JavaScript or CSS libraries.
 
@@ -440,11 +442,16 @@ The bundled geoid model `interpolation/geoid/PL_geod.7z` covers Poland (WGS 84 l
 ### Compression Parameters
 
 - `--method {dct,pred,sz3}`: selects the compression family (`dct` by default). When `--method dct` is active, the program automatically routes the raster to `cm=1`, `cm=3`, `cm=4`, `cm=5`, or `cm=6` according to raster type and CLI/config flags. When `--method pred` (`cm=7`) or `--method sz3` (`cm=8`) is explicitly selected, rasters with any number of bands are routed to the predictive MED or external SZ3 pipeline, each band coded separately.
-- `--accuracy`: maximum error. For 8-bit rasters it is in pixel values; the web GUI takes it from the 8-bit accuracy field when `pred` or `sz3` is selected.
-- `--uint8-accuracy`: maximum pixel error for uint8 accuracy paths (`cm=5`, `cm=6`).
+- `--accuracy`: maximum error in raster units for float bands (`cm=3`, and float bands in `pred` / `sz3`).
+- `--uint8-accuracy-mode` / `--no-uint8-accuracy-mode`: accuracy mode for integer bands (on in the shipped `config.json`). `--no-uint8-accuracy-mode` selects the lossy JPEG quality mode (`cm=1`, no error control), which exists only for 3-band uint8 RGB; any other integer raster is refused with an error (use `--uint8-accuracy` or `--lossless`). Float rasters are not affected and use `--accuracy` (`cm=3`).
+- `--uint8-accuracy`: maximum error in raster units (pixel values for uint8) for integer bands in accuracy mode: `cm=5`, `cm=6`, and integer bands in `pred` / `sz3`.
+- `--lossless`: lossless `cm=4` for any data type (PNG for 3-band uint8 RGB, GeoTIFF otherwise); takes precedence over all other modes. The data are stored unchanged, with little or no size reduction.
 - `--rgb-quality`: JPEG quality for the TurboJPEG RGB path (`cm=1`).
-- `--block-size`: DCT block size (`8`, `16`, `32`).
-- `--rgb-channel-indices`: enable RGB-aware routing (`cm=6`) for multichannel rasters.
+- `--block-size` (`8`, `16`, `32`) or `--auto`: fixed DCT block size or automatic selection (section 9.3).
+- `--rgb-channel-indices` and `--ycbcr-per-block`: RGB bands (1-based, default `1,2,3`) and the per-block YCbCr path (`cm=6`).
+- `--backend {binary,heuristic}`, `--advanced-heuristic`, `--accept-prediction`: L search and prediction (sections 6–7).
+- `--processes` / `-p`, `--gpu {auto,on,off}`: worker processes and the GPU path.
+- `--crs`: output CRS (empty = CRS of the input, `none`, or e.g. `epsg:2180`).
 
 Full parameter documentation can be found in `compress.py` (`python3 compress.py --help`) or in the web GUI.
 
@@ -527,10 +534,10 @@ where:
 | **Prediction** | none | Simple / Advanced Heuristic lookup tables |
 | **RGB compression** | none | 1) per-block YCbCr (`cm=6`, accuracy-based, error <= epsilon), 2) TurboJPEG strips (quality-based, no max-error guarantee) |
 | **uint8 accuracy (`cm=5`)** | none | DCT binary search with pixel-error guarantee <= epsilon (minimum epsilon=2), centering -128, adaptive `sf` |
-| **Lossless PNG (`cm=4`)** | none | PNG Sub filter + zlib deflate, max error = 0 |
+| **Lossless mode (`cm=4`)** | none | raster stored unchanged as PNG (3-band uint8 RGB) or GeoTIFF DEFLATE + predictor, in `.7z` with the georeferencing; max error = 0 |
 | **YCbCr decorrelation** | none | RGB to YCbCr before DCT, reducing inter-channel correlation |
 | **Per-block YCbCr (`cm=6`)** | none | Hybrid per-block cascading selection of YCbCr multipliers, exact decoder-side error verification in RGB (`ycbcr_decode_verify`), batched IDCT plane decoding |
-| **Single-band near-lossless & benchmark paths (`cm=7`, `cm=8`)** | none | Optional explicit `--method pred` (MED + scalar quantization `.fpred`) and `--method sz3` (external SZ3 `.sz3`), integrated with `.7z` and GeoTIFF metadata restoration |
+| **Per-band near-lossless & benchmark paths (`cm=7`, `cm=8`)** | none | Optional explicit `--method pred` (MED + scalar quantization `.fpred`) and `--method sz3` (external SZ3 `.sz3`), integrated with `.7z` and GeoTIFF metadata restoration |
 
 ---
 
@@ -546,11 +553,11 @@ Geo[Input GeoTIFF / Raster] --> Method{--method selector}
 Method -->|dct default| Route{Data type & mode}
 Method -->|pred, per band| cm7[Near-lossless MED predictive cm=7 .fpred]
 Method -->|sz3, per band| cm8[External SZ3 absolute-error cm=8 .sz3]
-Route -->|float32 / int16| cm3[DCT compression: elevation data cm=3]
-Route -->|uint8 / 1 channel / accuracy mode| cm5[DCT compression: single-channel and multi-channel cm=5]
+Route -->|float32 / float64| cm3[DCT compression: elevation data cm=3]
+Route -->|integer bands / accuracy mode| cm5[DCT compression: integer bands cm=5]
 Route -->|uint8 / RGB / accuracy mode| cm6[DCT compression: per-block YCbCr cm=6]
 Route -->|RGB / quality mode| cm1[TurboJPEG compression cm=1]
-Route -->|uint8 / lossless mode| cm4[Lossless compression cm=4]
+Route -->|--lossless, any data type| cm4[Lossless cm=4: data unchanged in PNG or GeoTIFF]
 
 cm3 --> Pack[msgpack / container and 7z packaging]
 cm5 --> Pack
@@ -568,7 +575,7 @@ Unpack -->|cm=3| dec3[DC-Median reconstruction and IDCT]
 Unpack -->|cm=5| dec5[IDCT reconstruction + centering +128]
 Unpack -->|cm=6| dec6[Batched IDCT plane decode + inverse YCbCr]
 Unpack -->|cm=1| dec1[TurboJPEG strip decoding]
-Unpack -->|cm=4| dec4[zlib inflate and inverse PNG filter]
+Unpack -->|cm=4| dec4[PNG or GeoTIFF read, GeoTIFF written with CRS and NoData]
 Unpack -->|cm=7 / .fpred| dec7[residual codec decode + sequential MED decode + dequantization]
 Unpack -->|cm=8 / .sz3| dec8[SZ3 decompress + NoData mask restore]
 
@@ -608,10 +615,7 @@ graph TB
 
 ```mermaid
 graph TB
-    A["Read uint8 GeoTIFF"] --> B{"YCbCr decorrelation?"}
-    B -->|Yes| B2["RGB to YCbCr"]
-    B -->|No| C
-    B2 --> C["Split into NxN blocks + centering -128"]
+    A["Read one uint8 / integer band"] --> C["Split into NxN blocks + centering -128"]
     C --> D["Distribute blocks across CPU cores"]
     D --> E{"Block classification"}
     E -->|All zero, L=0| F1["Store L=0, no coefficients"]
@@ -662,10 +666,16 @@ graph TB
 
 ```mermaid
 graph TB
-    A["Read uint8 GeoTIFF, lossless mode"] --> B["PNG Sub filter: row[i] = pixel[i] - pixel[i-1]"]
-    B --> C["zlib deflate"]
-    C --> D[".7z archive: PPMD / LZMA2"]
+    A["Read raster, --lossless"] --> B{"uint8 with exactly 3 bands?"}
+    B -->|yes| C["PNG, ZLEVEL 9 + world file .pgw"]
+    B -->|no| D["GeoTIFF DEFLATE, predictor 2 integer / 3 float"]
+    C --> E["Read back and compare with the source"]
+    D --> E
+    E --> F["lossless_meta.msgpack: CRS, transform, NoData, band types"]
+    F --> G[".7z archive, tag LF when identical"]
 ```
+
+The values are not changed, so the archive is only as small as PNG or DEFLATE make it. The mode brings the data into the FIDWAC archive format (one `.7z` with the georeferencing, decoded to GeoTIFF); it is not a compression method of its own.
 
 ### 3.6 Decompression - DCT Path
 
@@ -685,7 +695,7 @@ graph TB
     C -->|cm=6| J6["Decode Y, Cb, Cr per block"]
     J6 --> K6["YCbCr to RGB"]
     K6 --> M
-    C -->|cm=4| J4["zlib decompress + inverse PNG Sub filter"]
+    C -->|cm=4, archives before the PNG / GeoTIFF lossless mode| J4["zlib decompress + inverse PNG Sub filter"]
     J4 --> M
     I --> K{"Block length L"}
     K -->|L=0| L1["Fill with zeros"]
@@ -801,7 +811,7 @@ Example comparison settings:
 
 | Mode | `backend` | `advanced_heuristic` | `backscan_break_after` | `accept_prediction_if_within_accuracy` |
 | ---- | --------- | -------------------- | ---------------------- | -------------------------------------- |
-| `binary` | `heuristic` | `False` | `0` | `False` |
+| `binary` | `binary` | `False` | `0` | `False` |
 | `advanced_heuristic_accept` | `heuristic` | `True` | `0` | `True` |
 
 **`advanced_heuristic_accept`** means Advanced Heuristic plus `accept_prediction_if_within_accuracy=True`. If the lookup prediction gives an `L_hat` that satisfies the error condition, the algorithm accepts it without further binary search:
@@ -810,7 +820,7 @@ $$
 \max \left|B - \hat{B}^{(\hat{L})}\right| \leq \varepsilon
 $$
 
-For float data, one predicted `L_hat` is checked. For uint8 data, the system uses the `uint8_L_prediction_scales` cascade and checks successive lengths `L_hat * s` (default: `0.9`, `1.0`, `1.1`, `1.3`, `1.5`, `2.0`). If a candidate satisfies accuracy, the smallest valid candidate from the cascade is accepted without a full binary search. If no candidate satisfies accuracy, the program switches to standard binary search using the prediction as the starting point.
+For float data, one predicted `L_hat` is checked. For uint8 data, the system uses the `uint8_L_prediction_scales` cascade and checks successive lengths `L_hat * s` (shipped `config.json`: `0.2`, `0.3`, `0.5`, `0.7`, `1.0`, `1.1`, `1.5`, `2.0`). If a candidate satisfies accuracy, the smallest valid candidate from the cascade is accepted without a full binary search. If no candidate satisfies accuracy, the program switches to standard binary search using the prediction as the starting point.
 
 ### 6.3 Empirical Testing
 
@@ -913,7 +923,7 @@ The search for DCT length `L` starts from a point determined by the available pr
 2. **uint8 / RGB YCbCr with L prediction (`uint8_use_L_prediction=True`)**
 
    - For 8-bit data, `L` prediction comes from NPZ grids fitted to `sf`, `N`, and, for `cm=6`, `uint8_accuracy`.
-   - If `accept_prediction_if_within_accuracy=true`, the program checks candidates from `uint8_L_prediction_scales`, by default: `0.9`, `1.0`, `1.1`, `1.3`, `1.5`, `2.0`.
+   - If `accept_prediction_if_within_accuracy=true`, the program checks candidates from `uint8_L_prediction_scales` (shipped `config.json`: `0.2`, `0.3`, `0.5`, `0.7`, `1.0`, `1.1`, `1.5`, `2.0`).
    - The tested lengths are `predicted_L * scale`, clipped to the valid `L` range.
    - If at least one candidate satisfies accuracy, the smallest valid length from the cascade is selected.
    - If no candidate satisfies accuracy, the program switches to standard binary search using `predicted_L` as the starting point.
@@ -996,8 +1006,8 @@ flowchart TD
 | Parameter | Default | Applies to | Description | Effect on speed/file |
 | --------- | ------- | ---------- | ----------- | -------------------- |
 | `minimize_backscan` | 10 | **all backends** | backscan steps after finding `L` | larger = slower, smaller file |
-| `backscan_break_after` | 3 | **all backends** | stop after N consecutive failures (0 = exhaustive) | larger = faster, larger file |
-| `accept_prediction_if_within_accuracy` | True | **all backends** (float and uint8) | accept a valid prediction without further search | True = faster, may produce a larger file |
+| `backscan_break_after` | 3 | **all backends** | stop after N consecutive failures (0 = exhaustive) | 0 = slowest, smallest file; a small value stops earlier: faster, larger file |
+| `accept_prediction_if_within_accuracy` | False | **all backends** (float and uint8) | accept a valid prediction without further search | True = faster, may produce a larger file |
 | `uint8_L_prediction_scales` | `[0.2, 0.3, 0.5, 0.7, 1.0, 1.1, 1.5, 2.0]` | uint8 accuracy + accept | multiplier cascade for predicted `L` | wider cascade = higher chance of fast acceptance, possible larger file |
 
 > **Note:** `minimize_backscan` and `backscan_break_after` work for **all** backends, including `binary`. More backscan means smaller files and more computation. In the current `config.json`, `backscan_break_after=3`, so the backscan may stop after three consecutive failed attempts to find a shorter valid `L`.
@@ -1010,10 +1020,10 @@ The most important encoding modes are:
 
 | Mode | Data | Stored data |
 | ---- | ---- | ----------- |
-| `cm=3` | float32/int16, e.g. DTM/DSM | DCT with accuracy guarantee, DC/AC storage |
-| `cm=5` | single uint8/int channels | DCT accuracy for 8-bit data, DC/AC storage |
+| `cm=3` | float32/float64 only, e.g. DTM/DSM | DCT with accuracy guarantee, DC/AC storage |
+| `cm=5` | integer bands (uint8, int8, uint16, int16) | DCT with `--uint8-accuracy`, DC/AC storage |
 | `cm=6` | RGB in accuracy mode | per-block YCbCr, separate Y/Cb/Cr storage with exact decoder-side RGB verification |
-| `cm=4` | uint8 lossless | lossless PNG Sub filter + zlib |
+| `cm=4` | any data, `--lossless` | raster unchanged: PNG + `.pgw` (3-band uint8 RGB) or GeoTIFF DEFLATE + predictor, with `lossless_meta.msgpack` |
 | `cm=1` / `jpeg_strips` | RGB without accuracy mode | TurboJPEG quality-based, `rgb.bin + meta.msgpack` |
 | `cm=7` (`--method pred`) | float/int rasters (each band separately) | near-lossless scalar quantization + MED predictor residuals (`.fpred` / `.7z`) |
 | `cm=8` (`--method sz3`) | float/int rasters (each band separately) | external SZ3 (`pysz`) absolute-error payload + NoData mask (`.sz3` / `.7z`) |
@@ -1100,14 +1110,20 @@ The `cm=6` archive stores three sets of lengths and coefficients:
 
 The `mult_y`, `mult_cb`, `mult_cr`, and `fallback` values are required for correct RGB block reconstruction. When `ycbcr_decode_verify=true` (default), each candidate accepted in the cascade is verified by `_rgb_error_via_decoder` using the exact decoder path (`reconstruct_block` IDCT, `+128` clipping to `[0, 255]`, and `ycbcr_to_rgb`), and if all multipliers fail, a DC-only fallback block is stored with its true decoder error rather than a synthetic zero error. During decompression, `_reconstruct_plane_batched` reconstructs Y, Cb, and Cr planes in vectorized batches, converts back to RGB, and clips values to the 0-255 range.
 
-### 8.5 Lossless uint8 Mode (`cm=4`)
+### 8.5 Lossless Mode (`cm=4`, `--lossless`)
 
-`cm=4` is used for exact reconstruction of uint8 data (`max error = 0`). It does not use DCT. Instead it applies:
+`cm=4` keeps every value exactly (`max error = 0`) and works for any data type and number of bands. It does not use the DCT and **does not compress in the FIDWAC sense**: the raster is only written into a standard lossless container and packed with its georeferencing into the FIDWAC `.7z` archive (`compress/compression_lossless.py`):
 
-- a PNG Sub filter, storing differences between neighbouring pixels in a row,
-- zlib deflate compression.
+| Input | Container in the `.7z` |
+| ----- | ---------------------- |
+| uint8 with exactly 3 bands (RGB) | PNG (ZLEVEL 9) + world file `.pgw` |
+| everything else: float32/float64, int8, int16, uint16, uint8 with 1 or 4 and more bands | GeoTIFF, DEFLATE (zlevel 9), predictor 2 (integers) or 3 (floating point), 256 × 256 tiles |
 
-This mode usually produces larger files than DCT accuracy mode, but preserves data without any loss. The output filename contains the suffix `LF`.
+`lossless_meta.msgpack` stores the CRS, transform, NoData and band types. Before the archive is written, the PNG or GeoTIFF is read back and compared with the source value by value (NaN equal to NaN); the archive is tagged `LF` only when they are identical, otherwise `VF`. Decompression writes a GeoTIFF with the full georeferencing in the original data type.
+
+The archive is as small as PNG or DEFLATE make it. When the input file is already compressed, there is little or no gain: an RGB PNG input ends up as practically the same PNG, only with the georeferencing in the archive. Measured archive / raw array size: RGB orthophoto 5,120 × 5,120 (PNG input) 0.09, six-band uint8 0.39, DSM float32 0.60. Use the DCT modes (`cm=3`, `cm=5`, `cm=6`) with an error bound for real size reduction.
+
+Archives written by earlier versions of `cm=4` (one msgpack with a PNG Sub filter + zlib per band) are still decoded.
 
 ### 8.6 Main msgpack Fields
 
@@ -1132,7 +1148,7 @@ This path is controlled by JPEG quality:
 "rgb_quality": 85
 ```
 
-Higher `rgb_quality` usually means better image quality and a larger file. Lower values mean more loss and a smaller file. This mode does not guarantee a maximum error in pixels or data units and can introduce excessive uncontrolled noise. It is limited to RGB images; it does not provide a single-channel mode or a multi-channel mode for more than 3 RGB channels. For RGB compression with a guaranteed error, use `cm=6`.
+Higher `rgb_quality` usually means better image quality and a larger file. Lower values mean more loss and a smaller file. This mode does not guarantee a maximum error in pixels or data units and can introduce excessive uncontrolled noise. It is limited to RGB images; it does not provide a single-channel mode or a multi-channel mode for more than 3 RGB channels. With `--no-uint8-accuracy-mode`, any other integer raster (1 band, 4 or more bands, int8, uint16, int16) is refused with an error instead of being sent to another path. For RGB compression with a guaranteed error, use `cm=6`.
 
 The archive format differs from the standard DCT path:
 
@@ -1151,14 +1167,14 @@ During decompression, the program reads `meta.msgpack`, decodes JPEG strips, and
 3. Integer quantization indices `q = round(filled / Q)` are predicted using the non-linear MED (LOCO-I) predictor (`median(a, b, a + b - c)`), and exact integer residuals `res = q - pred` are zigzag-mapped to unsigned integers and packed with the smaller of two codecs: `lzma-be` (one byte per pixel plus a list of escaped values >= 255, packed with raw LZMA2 `lc=0, lp=0, pb=0`) or `bz2-zz` (bzip2 over 16/32-bit words). On the tested DEM and orthophoto luminance this is 27-41% smaller than the earlier `zlib` packing, with identical decoded rasters.
 4. During decompression (`_med_decode`, compiled with Numba `@njit`), indices are reconstructed losslessly from the residuals, multiplied by `Q`, rounded/clipped for integer data types, and masked with NoData.
 
-The payload is stored in a `.fpred` container (`FPRD` magic + JSON metadata header with the `res_codec` field + packed residuals + `zlib` mask) and can be written directly or wrapped inside a `.7z` archive (LZMA2). Files written before `res_codec` existed (`zlib` residuals) still decode. MED works on one band at a time, so every band of a multi-band raster is coded separately. For RGB orthophotos, `cm=6` (`--method dct` with `--ycbcr-per-block`) gave the smallest file in our RGB test at the same maximum error.
+The payload is stored in a `.fpred` container (`FPRD` magic + JSON metadata header with the `res_codec` field + packed residuals + `zlib` mask) and can be written directly or wrapped inside a `.7z` archive (LZMA2). Files written before `res_codec` existed (`zlib` residuals) still decode. MED works on one band at a time, so every band of a multi-band raster is coded separately. On RGB orthophotos `cm=7` can give a smaller file than `cm=6` (`--method dct` with `--ycbcr-per-block`) at the same maximum error (table below; on one 5120 × 5120 orthophoto at 5 DN: CR 3.44 against 1.89), but with a lower PSNR and about 2.3 times longer encoding (24.5 s against 10.8 s). Integer bands use `--uint8-accuracy` as the bound when accuracy mode is on.
 
 **Quality trade-off (PSNR vs maximum error).** `cm=7` guarantees the maximum error `<= epsilon`, not PSNR. Every pixel is quantized with the same step `Q`, so the error is spread evenly over `[-epsilon, +epsilon]` and the RMSE is about `epsilon / sqrt(3)` (about `0.58 * epsilon`). The DCT paths guarantee the same maximum error but usually stay well below it, so for the same `epsilon` the PSNR of `cm=7` is lower. Measured values (single raster per row, `epsilon` given as the maximum-error bound):
 
 | Data | `epsilon` | DCT (`cm=3`/`cm=6`) | `cm=7` (MED) |
 | ---- | --------- | ------------------- | ------------ |
 | `urban_buildings.tif` (float DEM) | 0.05 | RMSE 0.0145, PSNR 79.2 dB | RMSE 0.0288, PSNR 73.2 dB |
-| orthophoto RGB, `cm=7` applied to R, G, B separately (in-memory experiment, not available in the CLI; size = raw residuals packed with 7z) | 5 | PSNR 43.2 dB (`cm=6`), archive 4.88 MB | PSNR 39.0 dB, 3.33 MB |
+| orthophoto RGB, `cm=7` on R, G, B separately (earlier in-memory experiment; size = raw residuals packed with 7z) | 5 | PSNR 43.2 dB (`cm=6`), archive 4.88 MB | PSNR 39.0 dB, 3.33 MB |
 
 Choose `cm=7` when the maximum-error guarantee and a small file matter more than average error. If the average error (PSNR/RMSE) must match a DCT result, use a smaller `epsilon` for `cm=7`; the file-size cost of that has not been measured here.
 
@@ -1166,8 +1182,9 @@ Choose `cm=7` when the maximum-error guarantee and a small file matter more than
 
 `cm=8` (`compress/compression_sz3.py`) is an explicit comparator/benchmark mode, applied to every band (`--method sz3`) backed by the external `pysz` (`SZ3`) library:
 1. Valid pixels are extracted, and NoData / NaN / +/-inf positions are zero-filled and stored in a separate `zlib`-compressed bitmask, with the same optional NaN/inf code stream as `cm=7`, so they are restored exactly. SZ3 does not preserve zeros exactly: original zeros decode to values within `epsilon` of 0, not necessarily 0.
-2. The 2D array is compressed with SZ3 in `ABS` error-bound mode with `absErrorBound = epsilon - m`, using the same float-storage margin `m` as `cm=7`.
-3. Spatial metadata (`H`, `W`, `eps`, `nodata`, `dtype`, `crs_wkt`, `transform`, `ratio`), the SZ3 byte stream, and the validity mask are written to a `.sz3` container (`SZ3D` magic, one payload per band) or wrapped into a `.7z` archive.4. Decompression restores the GeoTIFF with full CRS, affine transform, original data type (with integer rounding/clipping when applicable), and NoData mask.
+2. The 2D array is compressed with SZ3 in `ABS` error-bound mode with `absErrorBound = epsilon - m`, using the same float-storage margin `m` as `cm=7`. Integer bands use `--uint8-accuracy` as `epsilon` when accuracy mode is on (as in `cm=7`); otherwise they use `--accuracy`.
+3. Spatial metadata (`H`, `W`, `eps`, `nodata`, `dtype` of each band, `crs_wkt`, `transform`, `ratio`), the SZ3 byte stream, and the validity mask are written to a `.sz3` container (`SZ3D` magic, one payload per band) or wrapped into a `.7z` archive.
+4. Decompression restores the GeoTIFF with full CRS, affine transform, original data type (with integer rounding/clipping when applicable), and NoData mask.
 
 ---
 
@@ -1175,14 +1192,14 @@ Choose `cm=7` when the maximum-error guarantee and a small file matter more than
 
 ### 9.1 Block Extraction and Padding
 
-The image is split into square blocks of size `N x N` (for example 8x8 or 16x16). If image dimensions are not multiples of `N`, missing pixels are filled by padding. Blocks containing only zeros or only NoData values (-9999) are skipped during DCT processing and encoded with a single marker, which speeds up compression.
+The image is split into square blocks of size `N x N` (for example 8x8 or 16x16). If image dimensions are not multiples of `N`, missing pixels are filled by padding. Blocks containing only zeros or only NoData values (the NoData value of the input file) are skipped during DCT processing and encoded with a single marker, which speeds up compression.
 
 ### 9.2 Handling NoData and Zeros
 
 Blocks containing NoData, zero, NaN or +/-inf values are encoded specially for better compression:
 
 1. **Detection:** masks are created for NoData, zero, NaN and +/-inf positions. NaN and +/-inf cannot enter the DCT, so they are masked like NoData and restored exactly (mask types 3, 4 and 5).
-2. **Interpolation:** NoData, zero, NaN and +/-inf values are replaced with mean values from neighbouring pixels (nearest-neighbour style interpolation), which smooths the data and improves DCT compression.
+2. **Filling:** inside the encoder, NoData, zero, NaN and +/-inf positions are filled from neighbouring valid pixels, so the block has no holes and the DCT needs fewer coefficients. The filled values are never stored.
 3. **DCT compression:** performed on the interpolated block without holes.
 4. **Storage:** position masks are encoded with RLE together with DCT coefficients.
 5. **Decompression:** masks restore the original NoData, zero, NaN and +/-inf values to their exact positions.
@@ -1227,7 +1244,8 @@ FIDWAC stores the result as msgpack data optimized for compression inside a `.7z
 
 | Path | When used | Archive / container content |
 | ---- | --------- | --------------------------- |
-| DCT / accuracy (`cm=3`, `cm=4`, `cm=5`, `cm=6`) | elevation data, single uint8 channels, RGB accuracy, lossless (`--method dct`) | one `{name}.msgpack` file packed into `.7z` |
+| DCT / accuracy (`cm=3`, `cm=5`, `cm=6`) | elevation data, single uint8 channels, RGB accuracy (`--method dct`) | one `{name}.msgpack` file packed into `.7z` |
+| Lossless (`cm=4`) | `--lossless`, any data type | `{name}.png` + `{name}.pgw` (3-band uint8 RGB) or `{name}.tif` (GeoTIFF DEFLATE + predictor), and `lossless_meta.msgpack`, in `.7z` |
 | TurboJPEG (`cm=1`, `jpeg_strips`) | RGB `uint8` when `uint8_accuracy_mode=false` (`--method dct`) | `rgb.bin` with JPEG strips and `meta.msgpack` in `.7z` |
 | Predictive MED (`cm=7`) | raster with `--method pred` (each band separately) | `{name}.fpred` (`FPRD` payload per band: header + packed residuals (`res_codec`) + mask; several bands are stored in an `MBND` container), standalone or inside `.7z` |
 | External SZ3 (`cm=8`) | raster with `--method sz3` (each band separately) | `{name}.sz3` (`SZ3D` payload per band: header + SZ3 stream + mask; several bands in an `MBND` container), standalone or inside `.7z` |
@@ -1282,18 +1300,22 @@ The archive name encodes the most important settings, including automatic or fix
 Example scheme for the DCT path:
 
 ```text
-{name}_{AUTO|N}{N}_{Acc...|U8acc...|Lossless}_tdct{dct}_dec{decimal}_CRS{crs}_{VT|VF|LF}.7z
+{name}_{AUTO|N}{N}_{Acc...|U8acc...}_tdct{dct}_dec{decimal}_CRS{crs}_{VT|VF}.7z
 ```
+
+The accuracy tag shows the bound the bands are checked against: `U8acc{uint8_accuracy}_sf{...}` for integer bands (`cm=5`, `cm=6`; uint8, int8, uint16, int16), `Acc{accuracy}` for float bands (`cm=3`), and both for a raster that mixes float and integer bands.
+
+For the lossless mode the name is `{name}_Lossless_CRS{crs}_{LF|VF}.7z`.
 
 For TurboJPEG, the name includes JPEG quality, for example `_Q85_`.
 
-For `--method pred` and `--method sz3` the name is `{name}_PRED_eps{epsilon}_{VT|VF}.fpred` or `{name}_SZ3_eps{epsilon}_{VT|VF}.sz3`. `VT` means the stored raster meets `epsilon`. Both methods accept rasters with any number of bands; every band is coded separately with the same error bound.
+For `--method pred` and `--method sz3` with an output folder the name is `{name}_PRED_eps{accuracy}_{VT|VF}.7z` or `{name}_SZ3_eps{accuracy}_{VT|VF}.7z`; with an explicit `.fpred` / `.sz3` output name the payload is written without the `.7z` wrapper. `eps` in the name is the bound the bands are checked against: `--accuracy` for float bands, `--uint8-accuracy` for integer bands in accuracy mode, and both (`eps{accuracy}-{uint8_accuracy}`) for a raster that mixes float and integer bands. `VT` means every band meets its own bound. Both methods accept rasters with any number of bands; every band is coded separately.
 
 | Suffix | Meaning |
 | ------ | ------- |
 | `_VT` | all blocks satisfy the requested error |
 | `_VF` | some blocks exceed the requested error |
-| `_LF` | lossless mode `cm=4` |
+| `_LF` | lossless mode `cm=4`; the written file was checked to be identical to the source |
 | `_Q85` | TurboJPEG with quality 85 or another `rgb_quality` value |
 
 ---
@@ -1309,15 +1331,18 @@ FIDWAC_v2/
 ├── compress.py             # CLI interface for compression and decompression
 ├── interpolate.py          # CLI interface for IDW interpolation
 ├── config.py               # Configuration dataclasses and config.json handling
+├── compress_many.py        # Many files in one run (one initialisation per worker process)
 ├── compress/               # Compression and decompression package
 │   ├── compression.py      # Main controller routing to DCT, JPEG, or lossless paths
 │   ├── compression_dct.py  # DCT compression for float32 and uint8 accuracy (cm=3/5/6)
 │   ├── compression_jpeg.py # TurboJPEG quality-based path for uint8 RGB (cm=1)
-│   ├── compression_lossless.py # PNG Sub + zlib lossless path (cm=4)
+│   ├── compression_lossless.py # Lossless mode (cm=4): PNG / GeoTIFF in .7z, encoder and decoder
 │   ├── compression_pred.py # Near-lossless MED predictive path, band by band (cm=7)
 │   ├── compression_sz3.py  # External SZ3 benchmark path, band by band (cm=8)
 │   ├── multiband.py        # MBND container for several bands (.fpred / .sz3)
 │   ├── output_crs.py       # output CRS policy: input CRS, config CRS or none
+│   ├── special_values.py   # NaN / +-inf codes for cm=7 and cm=8
+│   ├── float_storage.py    # float32 storage margin of the error bound (cm=7, cm=8)
 │   ├── compression_utils.py
 │   └── decompression.py    # Unified decompression (.7z, .msgpack, .fpred, .sz3, batched cm=6 IDCT)
 ├── core/                   # Core coding and transform algorithms
@@ -1330,6 +1355,8 @@ FIDWAC_v2/
 ├── engine/                 # Block processing engine
 │   ├── blocks.py           # Raster blocking, multiprocessing, YCbCr decorrelation
 │   ├── refine.py           # Hybrid L search
+│   ├── u8_lockstep.py      # Batched three-phase uint8 search (CPU / GPU)
+│   ├── gpu_u8/             # CUDA kernels and build.sh for the GPU path
 │   └── utils.py            # Interpolation, RLE masks, helpers
 ├── interpolation/          # IDW interpolation (adapted from ZSIP/FIDWaC)
 │   ├── points.py           # Point readers (TXT/CSV, LAS/LAZ, SHP), geoid correction
@@ -1372,7 +1399,7 @@ FIDWAC_v2/
 | Parameter | Current | Meaning |
 | --------- | ------- | ------- |
 | `method` | `"dct"` | compression method family: `"dct"` (default), `"pred"` (`cm=7`), or `"sz3"` (`cm=8`) |
-| `accuracy` | `0.05` | maximum error for float data such as DTM/DSM (also `pred` / `sz3`); for 8-bit inputs the web GUI uses the 8-bit accuracy field |
+| `accuracy` | `0.05` | maximum error for float data such as DTM/DSM (also float bands in `pred` / `sz3`); integer bands in accuracy mode use `uint8_accuracy` |
 | `block_size` | `8` | base block size `N`; may be changed by auto-selection |
 | `decimal_places` | `2` | number of decimal places used when quantizing DCT coefficients |
 | `crs` | `""` | output CRS: empty = CRS of the input file (no CRS if the input has none); `none` = write without a CRS; an EPSG code such as `epsg:2180` replaces the input CRS |
@@ -1380,13 +1407,13 @@ FIDWAC_v2/
 | `auto_select_sample_size` | `1000` | number of blocks used for trial evaluation |
 | `allowed_block_sizes` | `[8, 16, 32]` | allowed `N` values for auto-selection |
 | `uint8_accuracy_mode` | `true` | enables accuracy mode for 8-bit data |
-| `uint8_accuracy` | `10` | maximum pixel error for uint8 accuracy paths |
+| `uint8_accuracy` | `10` | maximum error for integer bands in accuracy mode (`cm=5`, `cm=6`, integer bands in `pred` / `sz3`) |
 | `uint8_scaling_factor` | `[1, 10]` | candidate `sf` values tested for uint8 data |
 | `ycbcr_per_block_mode` | `true` | enables per-block RGB YCbCr path (`cm=6`) |
 | `ycbcr_decode_verify` | `true` | verifies final `cm=6` candidate with exact decoder IDCT + RGB reconstruction |
 | `ycbcr_fallback_multipliers` | `1.0 -> 0.1` | accuracy-multiplier cascade for RGB YCbCr blocks |
 | `rgb_quality` | `85` | TurboJPEG quality, used only when `uint8_accuracy_mode=false` |
-| `lossless` | `false` | enables PNG/zlib lossless mode for uint8 (`cm=4`); takes precedence over `uint8_accuracy_mode` and the per-block RGB path |
+| `lossless` | `false` | lossless mode (`cm=4`) for any data type: PNG for 3-band uint8 RGB, GeoTIFF otherwise; takes precedence over all other modes |
 
 #### `performance`
 
@@ -1459,7 +1486,7 @@ Each file of a job runs as a `compress.py --quiet` subprocess (an interpolation 
 
 > **Note:** The **Advanced** section of the web GUI exposes the performance switches (L2 precheck, incremental backscan, full IDCT verification). Their defaults come from `config.json`.
 
-**Uint8 Accuracy mode:** when Accuracy mode is selected for 8-bit RGB data using per-block YCbCr (`cm=6`), the system uses `lookup_uint8_ycbcr_L_N8_sf{sf}_acc{A}_grid.npz` tables if available for the requested accuracy. It falls back to `binary` when no file is available.
+**Uint8 Accuracy mode:** when Accuracy mode is selected for 8-bit RGB data using per-block YCbCr (`cm=6`) and L prediction is on, the system uses `lookup_uint8_ycbcr_L_N8_sf{sf}_acc{A}_grid.npz` tables for the requested accuracy, then the fallback chain of section 6.5 (nearest lower accuracy, general YCbCr grid, standard uint8 grid). Without any grid the search starts from `total_len // 2`, as in `binary`.
 
 **Accept prediction:** `accept_prediction_if_within_accuracy` allows the program to skip binary search when the heuristic prediction already satisfies accuracy. It works for both float and uint8 data.
 
@@ -1501,7 +1528,7 @@ FIDWAC v2 introduces the following improvements over FIDWaC v1:
 | 21 | **Recursive directories** | No full input directory hierarchy restoration. | GUI and CLI scan directories recursively and restore hierarchy in the output directory. |
 | 22 | **YCbCr decorrelation** | No RGB -> YCbCr transform. | RGB -> YCbCr before DCT for uint8 accuracy, reducing file size at the same RGB error guarantee. |
 | 23 | **uint8 accuracy mode (`cm=5`)** | No dedicated accuracy path for single 8-bit channels. | Maximum error guarantee for values 0-255, centering -128, and adaptive `scaling_factor`. |
-| 24 | **Lossless PNG mode (`cm=4`)** | No dedicated lossless uint8 mode. | PNG Sub filter + zlib, `max error = 0`. |
+| 24 | **Lossless mode (`cm=4`)** | No lossless mode. | Data stored unchanged in PNG (3-band uint8 RGB) or GeoTIFF DEFLATE + predictor with the georeferencing in `.7z`, `max error = 0`; it organises the data in the FIDWAC format but adds little compression. |
 | 25 | **Per-block RGB YCbCr (`cm=6`)** | No RGB path with error guarantee. | Default RGB accuracy path with cascading multipliers, RGB validation, and compact stream packing. |
 | 26 | **Decoder-verified RGB YCbCr (`ycbcr_decode_verify`)** | Encoder-side fast check only. | Final `cm=6` candidate is verified with the exact decoder IDCT + `clip(+128)` + `ycbcr_to_rgb` pipeline (`_rgb_error_via_decoder`). |
 | 27 | **Batched `cm=6` plane decoding** | Block-by-block IDCT loop during decompression. | `_reconstruct_plane_batched` evaluates `scipy.fft.idct` on block chunks. |
@@ -1528,16 +1555,16 @@ Tests were performed on real geospatial data: digital surface and terrain models
 
 #### UInt8 and RGB (sums over all runs; CR in parentheses relative to the input file size)
 
-| Dataset | Max error [DN] | SZ3 size [GB] | FIDWAC v2 size [GB] | CR SZ3 | CR FIDWAC v2 |
-| ------- | :------------: | :-----------: | :-----------------: | :----: | :----------: |
-| Multiband UInt8 (6 bands, 12.13 GB raw) | 2 | 3.82 | **3.46** | 3.18 (2.57) | **3.51 (2.84)** |
-| | 5 | **2.34** | 2.73 | **5.19 (4.19)** | 4.45 (3.60) |
-| | 10 | **1.47** | 2.12 | **8.27 (6.69)** | 5.73 (4.63) |
-| | 20 | **0.82** | 1.44 | **14.82 (11.98)** | 8.42 (6.81) |
-| RGB orthophotos (3 bands, 235.93 GB raw) | 2 | 78.92 | **55.80** | 2.99 (1.24) | **4.23 (1.76)** |
-| | 5 | 44.68 | **32.19** | 5.28 (2.19) | **7.33 (3.04)** |
-| | 10 | 24.79 | **21.81** | 9.52 (3.95) | **10.82 (4.49)** |
-| | 20 | **11.80** | 12.09 | **19.99 (8.30)** | 19.52 (8.10) |
+| Dataset | Max error [DN] | SZ3 size [GB] | FIDWAC v2 size [GB] | CR SZ3 | CR FIDWAC v2 | Files with a smaller FIDWAC v2 archive |
+| ------- | :------------: | :-----------: | :-----------------: | :----: | :----------: | :---: |
+| Multiband UInt8 (6 bands, 12.13 GB raw) | 2 | 3.82 | **3.46** | 3.18 (2.57) | **3.51 (2.84)** | 91% |
+| | 5 | **2.34** | 2.73 | **5.19 (4.19)** | 4.45 (3.60) | 3% |
+| | 10 | **1.47** | 2.12 | **8.27 (6.69)** | 5.73 (4.63) | 0% |
+| | 20 | **0.82** | 1.44 | **14.82 (11.98)** | 8.42 (6.81) | 0% |
+| RGB orthophotos (3 bands, 235.93 GB raw) | 2 | 78.92 | **55.80** | 2.99 (1.24) | **4.23 (1.76)** | 91% |
+| | 5 | 44.68 | **32.19** | 5.28 (2.19) | **7.33 (3.04)** | 100% |
+| | 10 | 24.79 | **21.81** | 9.52 (3.95) | **10.82 (4.49)** | 89% |
+| | 20 | **11.80** | 12.09 | **19.99 (8.30)** | 19.52 (8.10) | 56% |
 
 FIDWAC v2: `auto` for the multiband imagery, N = 8 for the RGB orthophotos.
 
@@ -1555,6 +1582,75 @@ FIDWAC v2: `auto` for the multiband imagery, N = 8 for the RGB orthophotos.
 | DTM | 0.1 | 9.3 | 15.5 | 15.7 | **51.62** | 30.99 | 30.59 |
 | DTM | 0.5 | 2.0 | 3.6 | 3.0 | **241.81** | 134.76 | 159.01 |
 | DTM | 1.0 | 1.1 | 3.0 | 2.1 | **434.69** | 161.82 | 229.35 |
+
+#### Reconstruction quality and time, UInt8 (medians per unique file)
+
+The median CR per file is higher than the total CR above, because the total is dominated by files that compress badly. PSNR and RMSE are those of the worst band.
+
+| Dataset | ε [DN] | Variant | Median CR | PSNR [dB] | RMSE | SSIM | Mean ΔE76 | p95 ΔE76 | Encode / decode [s] |
+| :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| RGB | 2 | FIDWAC v2 N = 8 | 4.25 | **49.22** | **0.768** | **0.9962** | **0.56** | **1.32** | 202.3 / 36.3 |
+| | | SZ3 | 3.35 | 46.63 | 1.186 | 0.9914 | 1.02 | 2.03 | 5.6 / 4.0 |
+| | 5 | FIDWAC v2 N = 8 | 9.63 | **42.44** | **1.766** | **0.9794** | **1.00** | **2.04** | 114.0 / 32.5 |
+| | | SZ3 | 6.47 | 39.52 | 2.674 | 0.9607 | 2.31 | 5.07 | 5.5 / 3.8 |
+| | 10 | FIDWAC v2 N = 8 | 19.13 | **37.15** | **3.357** | **0.9318** | **1.49** | **3.21** | 91.9 / 29.9 |
+| | | SZ3 | 12.98 | 34.45 | 4.731 | 0.9058 | 3.75 | 8.86 | 5.5 / 3.7 |
+| | 20 | FIDWAC v2 N = 8 | 44.34 | **32.66** | **5.709** | **0.8419** | **2.16** | **5.30** | 83.8 / 28.1 |
+| | | SZ3 | 35.01 | 29.82 | 7.436 | 0.7946 | 5.23 | 12.06 | 5.3 / 3.5 |
+| Multiband | 2 | FIDWAC v2 auto | 3.61 | **49.04** | **0.759** | **0.9933** | **0.63** | **1.40** | 7.6 / 5.0 |
+| | | SZ3 | 3.24 | 46.39 | 1.100 | 0.9889 | 1.10 | 2.08 | 0.6 / 0.5 |
+| | 5 | FIDWAC v2 auto | 4.60 | **42.34** | **1.578** | **0.9796** | **1.23** | **2.59** | 7.3 / 5.0 |
+| | | SZ3 | 5.40 | 38.89 | 2.525 | 0.9612 | 2.55 | 5.22 | 0.6 / 0.5 |
+| | 10 | FIDWAC v2 auto | 6.00 | **36.55** | **2.964** | **0.9447** | **1.90** | **4.04** | 7.2 / 5.0 |
+| | | SZ3 | 8.75 | 33.03 | 4.711 | 0.9077 | 4.41 | 9.76 | 0.6 / 0.5 |
+| | 20 | FIDWAC v2 auto | 9.50 | **30.42** | **5.530** | **0.8546** | **2.80** | **6.40** | 6.8 / 4.8 |
+| | | SZ3 | 15.86 | 27.42 | 8.269 | 0.8155 | 6.98 | 15.70 | 0.6 / 0.5 |
+
+#### Reconstruction quality and time, Float32 (medians per unique file)
+
+FIDWAC v2 with N = 8; the `auto` and N = 16 variants are close to N = 8 except on DTM at 0.5–1 m, where they reach higher CR at a higher RMSE.
+
+| Dataset | ε [m] | Variant | Median CR | PSNR [dB] | RMSE [m] | Rel. L₂ [%] | Slope RMSE [°] | \|ΔV/V\| [ppm] | Encode / decode [s] |
+| :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| DSM | 0.01 | FIDWAC v2 | 2.54 | **89.27** | **0.0015** | **0.0014** | **0.086** | **0.05** | 2.65 / 2.61 |
+| | | SZ3 | **3.74** | 77.81 | 0.0058 | 0.0050 | 0.288 | 0.10 | 0.06 / 0.05 |
+| | 0.05 | FIDWAC v2 | 3.62 | **73.59** | **0.0099** | **0.0087** | **0.576** | **0.26** | 2.64 / 2.59 |
+| | | SZ3 | **5.76** | 64.19 | 0.0278 | 0.0246 | 1.204 | 0.78 | 0.06 / 0.05 |
+| | 0.1 | FIDWAC v2 | 3.71 | **66.88** | **0.0211** | **0.0181** | **1.117** | **0.26** | 2.64 / 2.59 |
+| | | SZ3 | **7.11** | 58.47 | 0.0539 | 0.0486 | 2.116 | 2.62 | 0.06 / 0.05 |
+| | 0.5 | FIDWAC v2 | 6.17 | **50.95** | **0.1272** | **0.1176** | **4.706** | **0.54** | 2.64 / 2.59 |
+| | | SZ3 | **12.75** | 45.00 | 0.2578 | 0.2340 | 7.803 | 27.91 | 0.05 / 0.05 |
+| | 1.0 | FIDWAC v2 | 6.81 | **44.50** | **0.2786** | **0.2555** | **8.419** | **0.54** | 2.65 / 2.59 |
+| | | SZ3 | **18.10** | 39.21 | 0.5052 | 0.4618 | 12.655 | 90.90 | 0.05 / 0.05 |
+| DTM | 0.01 | FIDWAC v2 | 5.08 | **62.10** | **0.0034** | **0.0030** | **0.110** | **0.04** | 2.64 / 2.56 |
+| | | SZ3 | **10.84** | 58.00 | 0.0055 | 0.0047 | 0.225 | 0.21 | 0.05 / 0.04 |
+| | 0.05 | FIDWAC v2 | 17.41 | **47.46** | **0.0181** | **0.0159** | **0.721** | **0.31** | 2.62 / 2.56 |
+| | | SZ3 | **29.10** | 44.75 | 0.0250 | 0.0215 | 0.993 | 2.13 | 0.05 / 0.04 |
+| | 0.1 | FIDWAC v2 | 35.20 | **41.63** | **0.0338** | **0.0294** | **1.327** | **0.31** | 2.62 / 2.56 |
+| | | SZ3 | **55.64** | 39.88 | 0.0445 | 0.0379 | 1.562 | 7.47 | 0.05 / 0.04 |
+| | 0.5 | FIDWAC v2 | 160.16 | **34.55** | **0.0876** | **0.0742** | 3.338 | **0.93** | 2.62 / 2.56 |
+| | | SZ3 | **301.89** | 28.82 | 0.1479 | 0.1308 | **2.862** | 125.20 | 0.05 / 0.04 |
+| | 1.0 | FIDWAC v2 | 175.63 | **33.30** | **0.1036** | **0.0914** | 3.830 | **0.93** | 2.63 / 2.56 |
+| | | SZ3 | **558.47** | 23.95 | 0.2434 | 0.2298 | **3.286** | 361.20 | 0.05 / 0.04 |
+
+On the small Float32 tiles (0.64 MB and 0.16 MB) the FIDWAC v2 time is almost the same for DSM and DTM: it is dominated by the fixed start-up cost of the program, not by the data size.
+
+#### Throughput
+
+Throughput = raw array size / wall-clock time of one program call (median over unique files; the range covers all error bounds).
+
+| Dataset | Variant | Encoding [MB/s] | Decoding [MB/s] |
+| :--- | :--- | :---: | :---: |
+| DSM | FIDWAC v2 N = 8 | 0.24 | 0.25 |
+| | SZ3 | 10.4–12.0 | 12.9–13.5 |
+| DTM | FIDWAC v2 N = 8 | 0.061 | 0.063 |
+| | SZ3 | 3.05–3.35 | 3.60–3.71 |
+| Multiband UInt8 | FIDWAC v2 auto | 0.51–0.56 | 0.77–0.80 |
+| | SZ3 | 6.15–6.23 | 7.84–8.16 |
+| RGB | FIDWAC v2 N = 8 | 0.39–0.94 | 2.16–2.79 |
+| | SZ3 | 14.0–14.9 | 19.6–22.6 |
+
+SZ3 is one to two orders of magnitude faster. FIDWAC v2 spends most of its time on the per-block search for the shortest coefficient chain and on the error verification after decoding, which give the guaranteed maximum error and the lower reconstruction error shown above.
 
 ---
 
@@ -1585,7 +1681,7 @@ Part of the advantage on RGB data results from the **per-block YCbCr transform w
 
 SZ3 gives higher compression ratios than FIDWAC v2 at every bound, with the largest difference on the smooth DTM surfaces (28.79 versus 16.92 at 0.05 m, compared with 6.49 versus 4.03 for DSM). The Lorenzo/interpolation predictor of SZ3 works very well on near-flat surfaces, while the DCT must still store the DC and several AC coefficients of each block.
 
-At the same error bound, however, FIDWAC v2 reconstructs both surfaces more closely, with a lower RMSE at every bound, and preserves derived terrain quantities better: the slope error is lower on DSM at every bound and on DTM up to 0.1 m, and the median earthwork-volume difference stays below 1 ppm, whereas for SZ3 it reaches 91 ppm (DSM) and 361 ppm (DTM) at 1 m. On the smooth DTM at 0.5–1 m SZ3 gives a slightly lower slope error (2.86–3.29° versus 3.34–3.83°).
+At the same error bound, however, FIDWAC v2 reconstructs both surfaces more closely, with a lower RMSE at every bound, and preserves derived terrain quantities better: the slope error is lower on DSM at every bound and on DTM up to 0.1 m, and the median earthwork-volume difference with N = 8 stays below 1 ppm (0.04–0.93 ppm; with N = 16 or `auto` on DTM at 0.5–1 m it is 5.8–10.3 ppm), whereas for SZ3 it reaches 91 ppm (DSM) and 361 ppm (DTM) at 1 m. On the smooth DTM at 0.5–1 m SZ3 gives a slightly lower slope error (2.86–3.29° versus 3.34–3.83°).
 
 #### Application Context: Morphological Data (CMORPH)
 
@@ -1614,7 +1710,17 @@ The comparison results come from a reproducible test harness (`analysis/tests/ru
 
 ### 14.1 Test matrix
 
-- **Datasets:** `dsm` and `dtm` (Float32 GeoTIFF tiles), `multi_uint_6ch` (six-band UInt8 GeoTIFF), `rgb` (three-band UInt8 PNG orthophotos with `.pgw`). `multi_float32_5ch` has only 3 files and is excluded from the results.
+- **Datasets:** `dsm` and `dtm` (Float32 GeoTIFF tiles), `multi_uint_6ch` (six-band UInt8 GeoTIFF), `rgb_10000` (three-band UInt8 PNG orthophotos with `.pgw`). `multi_float32_5ch` has only 3 files and is excluded from the results. Characteristics of the datasets:
+
+| Dataset | Type | Bands | Size [px] | Resolution | Unique files | Raw volume [GB] | Georeferencing | NoData (median) | Std. dev. (median) | Entropy [bit/sample] |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- | :---: | :---: | :---: |
+| DSM | float32 | 1 | 400 × 400 | 0.50 m | 2,550 | 1.63 | EPSG:2180 in the file | 0% | 9.15 m | 7.23 |
+| DTM | float32 | 1 | 200 × 200 | 1.00 m | 2,558 | 0.41 | EPSG:2180 in the file | 0% | 0.85 m | 7.30 |
+| Multiband | uint8 | 6 | 800 × 800 (98.2% of files; 48 larger, up to 3,200 × 3,200) | 0.25 m | 2,687 | 10.89 | EPSG:2180 in the file | 0% | 57.3 | 7.50 |
+| RGB | uint8 | 3 | 5,120 × 5,120 | 0.10 m | 2,693 | 211.79 | `.pgw` world file (PNG has no CRS) | 0% | 34.1 | 6.98 |
+
+The datasets contain no NoData, so the benchmark does not depend on mask handling.
+
 - **Error bounds:** 0.01, 0.05, 0.1, 0.5 and 1.0 for Float32; 2, 5, 10 and 20 DN for UInt8.
 - **Variants per dataset:** DSM and DTM `fidwac_n8`, `fidwac_n16`, `fidwac_auto`, `sz3_default`; multiband `fidwac_auto`, `sz3_default`; RGB `fidwac_n8`, `sz3_default`.
 - **Sampling:** `run.max_files_per_dataset` files are drawn at random from each dataset (`run.random_sample_seed`); the results above combine three samples of 1,000 files.
@@ -1643,11 +1749,24 @@ The comparison results come from a reproducible test harness (`analysis/tests/ru
 
 The tests revealed that at 2 DN about 30% of the RGB runs and 1.3% of the multiband runs exceeded the error bound in whole 8 × 8 blocks (up to 128 DN) although the archives were tagged VT. The cause was the decoder, which filled a colour channel stored without coefficients (`L = 0`) with 0 instead of the neutral 128 (section *Batched uint8 path*). The archives were correct; after the fix (commit `c717cea`) all affected files were recomputed, and none of the 168,000 runs exceeds its error bound.
 
+### 14.5 Small-file fragmentation
+
+The tiles are small (DSM 400 × 400 px), so we checked whether splitting a raster into files limits compression. The same DSM pixels (a 1,600 × 1,600 px mosaic of 25 tiles) were compressed as one raster and as 25 independent 400 × 400 px windows without overlap; only the block borders differ. All results are VT.
+
+| ε [m] | FIDWAC v2, whole raster [B] | FIDWAC v2, windows [B] | Windows / whole | SZ3, whole raster [B] | SZ3, windows [B] | Windows / whole |
+| :---: | ---: | ---: | :---: | ---: | ---: | :---: |
+| 0.1 | 3,493,145 | 3,503,510 | 1.003 | 1,886,003 | 1,920,689 | 1.018 |
+| 0.5 | 2,353,941 | 2,402,164 | 1.020 | 1,162,052 | 1,180,714 | 1.016 |
+
+Fragmentation enlarges the archives by 0.3–2.0% (FIDWAC v2) and 1.6–1.8% (SZ3), which is small compared with the factor of about 2 in CR between the methods on Float32 data.
+
 ---
 
 ## License and Citation
 
 FIDWAC v2 is distributed under the MIT License. See `LICENSE` for the full text.
+
+For academic use, cite the FIDWaC paper (Łysko et al., 2025, *SoftwareX* 31, 102300; Bibliography item 3) and, for the test data, the FIDWAC dataset on Zenodo (DOI 10.5281/zenodo.21393089).
 
 ---
 

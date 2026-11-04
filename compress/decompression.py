@@ -533,9 +533,16 @@ def _decompress_single_channel(
     if cm == 4 and isinstance(raw_c, (bytes, bytearray)):
         import zlib
 
-        filter_used = ch_data.get("f", False)
+        filter_used = ch_data.get("f")
         decompressed = zlib.decompress(raw_c)
         filtered = np.frombuffer(decompressed, dtype=np.uint8).reshape(H, W)
+        if filter_used is None:
+            # Single-band cm=4 archives did not store the filter flag. The encoder kept the Sub filter
+            # when it compressed better, i.e. for smooth images, so take the smoother reading.
+            def roughness(a):
+                return np.abs(np.diff(a.astype(np.int16), axis=1)).mean() if W > 1 else 0.0
+
+            filter_used = roughness(np.cumsum(filtered, axis=1, dtype=np.uint8)) < roughness(filtered)
         if filter_used:
             # Inverse Sub filter: original[i] = filtered[i] + original[i-1]
             result = np.cumsum(filtered, axis=1, dtype=np.uint8)
@@ -1128,6 +1135,10 @@ def decompress_file(
         member = _find_payload_member(file_path)
         if member is not None:
             return _decode_archived_payload(file_path, member, output_dir)
+        from compress.compression_lossless import decompress_lossless, is_lossless_archive
+
+        if is_lossless_archive(file_path):
+            return decompress_lossless(file_path, output_dir, config)
 
     if not config.output.quiet:
         print(f"Loading: {file_path}")

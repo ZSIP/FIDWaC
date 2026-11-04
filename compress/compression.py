@@ -6,7 +6,7 @@ Actual encoding logic lives in sub-modules:
 
   compression_utils.py   — shared helpers (padding, serialization, archive I/O)
   compression_jpeg.py    — JPEG turbojpeg path (uint8 RGB, cm=1)
-  compression_lossless.py— lossless deflate path (uint8, cm=4)
+  compression_lossless.py— lossless mode (cm=4): PNG for 3-band uint8, GeoTIFF otherwise
   compression_dct.py     — DCT path (float32 elevation + uint8 accuracy, cm=3/5/6)
 
 Compression mode codes (cm):
@@ -17,7 +17,9 @@ Compression mode codes (cm):
         msgpack 'cm' field.
   cm=3  DCT with DC Median3 Predictor + separate DC/AC streams — for float32/int16
         elevation data (e.g. DEM, LiDAR height). Binary search guarantees max error ≤ε.
-  cm=4  Lossless PNG Sub filter + zlib deflate — for uint8 lossless mode (max error = 0).
+  cm=4  Lossless (--lossless, any data type): the raster unchanged in PNG + world file (3-band
+        uint8) or GeoTIFF DEFLATE + predictor, packed into .7z. max error = 0. Older archives
+        (msgpack, PNG Sub filter + zlib per band) are still decoded.
   cm=5  Standard DCT accuracy mode (uint8/int8 single-channel) — binary search with
         centering (-128), adaptive scaling factor. Guarantees max error ≤ε in grayscale
         (0–255). No color-space transform. Used for LiDAR intensity, Hillshade, etc.
@@ -46,7 +48,7 @@ from .compression_utils import (
     remove_if_exists,
 )
 from .compression_jpeg import compress_jpeg_path
-from .compression_lossless import compress_channel_lossless
+from .compression_lossless import compress_lossless
 from . import compression_dct
 from .compression_dct import (
     compress_channel_dct,
@@ -104,7 +106,7 @@ def compress_image(
       - uint8 RGB (3 bands, quality mode)  → JPEG turbojpeg strips (cm=1)
       - uint8 RGB (3+ bands, accuracy mode,
         ycbcr_per_block enabled)           → per-block YCbCr DCT (cm=6)
-      - uint8 any bands, lossless          → deflate per-band (cm=4)
+      - any data, --lossless               → PNG (3-band uint8) / GeoTIFF in .7z (cm=4)
       - uint8 any bands, accuracy mode     → DCT binary search (cm=5)
       - float32/64 elevation               → DCT binary search (cm=3)
       - no cm field (older files)          → interleaved VLQ (cm=0)
@@ -131,6 +133,13 @@ def compress_image(
     config._source_has_nodata = meta["has_nodata"]
     H, W = meta["H"], meta["W"]
 
+    if config.compression.lossless:
+        result = compress_lossless(
+            src, file_path, meta["raster_crs"], meta["transform"], config, output_dir, start_time
+        )
+        src.close()
+        return result
+
     u8_accuracy_mode = getattr(config.compression, "uint8_accuracy_mode", False)
     if (
         meta["all_uint8"]
@@ -155,19 +164,15 @@ def compress_image(
         src.close()
         return result
 
-    # Log redirect notice if user selected quality mode but the image is not exactly 3-channel RGB
-    if meta["all_uint8"] and not u8_accuracy_mode and not config.compression.lossless and not config.output.quiet:
-        if meta["num_channels"] != 3:
-            rgb_indices = getattr(config.compression, "rgb_channel_indices", [])
-            ycbcr_per_block_mode = getattr(config.compression, "ycbcr_per_block_mode", False)
-            if len(rgb_indices) == 3 and ycbcr_per_block_mode:
-                print(f"  [INFO] Quality mode is for 3-channel RGB. Selected {meta['num_channels']}-channel image. Redirecting to YCbCr accuracy-controlled path (cm=6).")
-            else:
-                print(f"  [INFO] Quality mode is for 3-channel RGB. Selected {meta['num_channels']}-channel image. Redirecting to standard DCT channels path (cm=5).")
-
-    # Log redirect notice if user selected lossless PNG but image is NOT uint8 (e.g. float32/int16)
-    if config.compression.lossless and not meta["all_uint8"] and not config.output.quiet:
-        print(f"  [INFO] Lossless PNG mode requires 8-bit (uint8) data. Selected non-8-bit image ({meta['band_dtypes'][0]}). Redirecting to accuracy-controlled DCT path (cm=3).")
+    # --no-uint8-accuracy-mode selects JPEG (cm=1), which exists only for 3-band uint8 RGB. Integer
+    # rasters of any other shape have no quality-mode path, so they are refused instead of guessed.
+    if not u8_accuracy_mode and any(np.dtype(d).kind in "iu" for d in meta["band_dtypes"]):
+        src.close()
+        raise ValueError(
+            f"--no-uint8-accuracy-mode selects JPEG (cm=1), which is only for 3-band uint8 RGB; "
+            f"this raster has {meta['num_channels']} band(s) of {', '.join(sorted(set(meta['band_dtypes'])))}. "
+            "Use --uint8-accuracy (DCT with an error bound) or --lossless."
+        )
 
     result = _compress_per_channel(
         src, file_path, meta, config, num_processes, output_dir, start_time, skip_archive
@@ -527,20 +532,7 @@ def _compress_one_channel(
     ch_idx_0 = band_idx - 1
     coeffs_np = None
 
-    if is_8bit_ch and config.compression.lossless:
-        lengths, compressed_data, filter_used, max_err, validity, block_size, padded_shape = (
-            compress_channel_lossless(src, band_idx)
-        )
-        ch_data = {
-            "l": lengths,
-            "cm": 4,
-            "c": compressed_data,
-            "f": filter_used,
-            "m": [],
-            "bs": block_size,
-        }
-
-    elif is_8bit_ch and u8_accuracy_mode:
+    if is_8bit_ch and u8_accuracy_mode:
         lengths, coeffs_np, masks_data, max_err, validity, block_size, padded_shape, ch_sf = (
             _compress_uint8_accuracy(
                 src,
@@ -828,16 +820,13 @@ def _finalize_dct_archive(
 
     dcv_compress = numpy_to_python(dcv_compress)
 
-    output_path = _build_dct_output_path(
-        file_path, config, output_dir, channel_block_sizes, all_uint8, u8_accuracy_mode, crs=raster_crs
-    )
     validity_suffix = _validity_suffix(config, all_valid)
     output_path = _build_dct_output_path(
         file_path,
         config,
         output_dir,
         channel_block_sizes,
-        all_uint8,
+        meta["band_dtypes"],
         u8_accuracy_mode,
         validity_suffix=validity_suffix,
         crs=raster_crs,
@@ -909,8 +898,6 @@ def _assemble_channels(dcv_compress, ch_data_list, num_channels):
 
 
 def _validity_suffix(config, all_valid):
-    if config.compression.lossless:
-        return "LF"
     return "VT" if all_valid else "VF"
 
 
@@ -919,11 +906,13 @@ def _build_dct_output_path(
     config,
     output_dir,
     channel_block_sizes,
-    all_uint8,
+    band_dtypes,
     u8_accuracy_mode,
     validity_suffix="VT",
     crs=None,
 ):
+    """Archive name. The accuracy tag shows the bound the bands are checked against: U8acc for
+    integer bands (cm=5/cm=6), Acc for float bands (cm=3), both for a raster mixing the two."""
     base_name = os.path.splitext(os.path.basename(file_path))[0]
     crs_clean = crs_label(crs)
 
@@ -937,19 +926,15 @@ def _build_dct_output_path(
     )
     bs_label = str(unique_bs[0]) if len(unique_bs) == 1 else "-".join(str(n) for n in unique_bs)
 
-    if config.compression.lossless and all_uint8:
-        acc_str = "Lossless"
-    elif u8_accuracy_mode and all_uint8:
+    is_int = [np.dtype(d).kind in "iu" for d in band_dtypes]
+    tags = []
+    if not all(is_int):
+        tags.append(f"Acc{config.compression.accuracy}")
+    if any(is_int) and u8_accuracy_mode:
         u8sf = getattr(config.compression, "uint8_scaling_factor", 10)
-        if isinstance(u8sf, list):
-            u8sf_str = "-".join(str(x) for x in u8sf)
-        else:
-            u8sf_str = str(u8sf)
-        acc_str = f"U8acc{config.compression.uint8_accuracy}_sf{u8sf_str}"
-    elif all_uint8 and not u8_accuracy_mode and not config.compression.lossless:
-        acc_str = f"Q{config.compression.rgb_quality}"
-    else:
-        acc_str = f"Acc{config.compression.accuracy}"
+        u8sf_str = "-".join(str(x) for x in u8sf) if isinstance(u8sf, list) else str(u8sf)
+        tags.append(f"U8acc{config.compression.uint8_accuracy}_sf{u8sf_str}")
+    acc_str = "_".join(tags) or f"Acc{config.compression.accuracy}"
 
     output_name = (
         f"{base_name}_{mode_suffix}{bs_label}"
@@ -979,10 +964,7 @@ def _print_dct_stats(
     print(f"  Original: {original_size / 1024:.1f} KB")
     print(f"  Compressed: {compressed_size / 1024:.1f} KB")
     print(f"  Ratio: {ratio:.2f}x")
-    if config.compression.lossless and all_uint8:
-        print("  Accuracy: lossless (max error = 0)")
-        print(f"  Max error: {max_error_global:.1f}")
-    elif u8_accuracy_mode and all_uint8:
+    if u8_accuracy_mode and all_uint8:
         u8_acc = config.compression.uint8_accuracy
         u8_sf = getattr(config.compression, "uint8_scaling_factor", 10)
         if isinstance(u8_sf, list):

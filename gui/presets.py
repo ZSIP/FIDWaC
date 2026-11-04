@@ -45,7 +45,7 @@ PRESETS = {
         "rgb_quality": 100,
         "uint8_mode": "lossless",
         "files_parallel": 1,
-        "description": "Lossless compression. No data loss.",
+        "description": "Lossless: data stored unchanged (PNG / GeoTIFF) in the FIDWAC archive; little or no size reduction.",
     },
 }
 

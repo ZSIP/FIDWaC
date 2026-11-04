@@ -333,10 +333,10 @@ TOOLTIPS = {
     "85% = good quality (default), 100% = visually lossless,\n"
     "50% = medium compression, 25% = high compression.\n"
     "Accuracy is set in the Accuracy field of the 8-bit section, not with this slider.",
-    "lossless": "Use lossless PNG compression for uint8 data.\n"
-    "When enabled, 8-bit data is compressed with PNG-style filtering + deflate.\n"
-    "No quality loss, but compression ratio is lower (2-4x vs 4-10x).\n"
-    "Only applies to uint8 data; float data always uses binary search.",
+    "lossless": "Lossless mode (any data type): the raster is stored unchanged,\n"
+    "3-band uint8 RGB as PNG + world file, everything else as GeoTIFF (DEFLATE),\n"
+    "packed with the georeferencing into the FIDWAC .7z archive.\n"
+    "Only organises the data in the FIDWAC format: little or no size reduction.",
     "uint8_quality": "Fast JPEG-like quantization for 8-bit data.\n"
     "Quality slider controls compression vs quality trade-off.\n"
     "Fastest option, no strict error guarantee.",
@@ -348,9 +348,9 @@ TOOLTIPS = {
     "Integer value: 2 = minimum (due to YCbCr rounding), higher = more error allowed.\n"
     "Used by dct Accuracy mode and by pred / sz3 on 8-bit input.\n"
     "Lower = better quality and larger file.",
-    "uint8_lossless": "Lossless PNG-style compression for 8-bit data.\n"
-    "PNG Sub filter + zlib deflate.\n"
-    "No quality loss, but lower compression ratio (2-4x).",
+    "uint8_lossless": "Lossless mode: data stored unchanged (PNG for 3-band RGB,\n"
+    "GeoTIFF otherwise) with the georeferencing in .7z.\n"
+    "No quality loss and little or no size reduction.",
     "allowed_block_sizes_8": "Allow N=8 block size in auto-select.\n"
     "Smaller blocks → better for complex/varied data.\n"
     "Slower compression but more accurate.",

@@ -356,6 +356,24 @@ def _gpu_process_cap(input_path, max_cpus):
     return max(1, min(max_cpus, int(budget // _GPU_CTX_MB)))
 
 
+def _name_eps(input_path, accuracy, eps_int):
+    """Error bound shown in pred/sz3 file names: the bound the bands are actually checked against
+    (eps_int for integer bands in accuracy mode, accuracy for float bands; both for mixed rasters)."""
+    if eps_int is None:
+        return f"{accuracy}"
+    try:
+        import numpy as np
+        import rasterio
+
+        with rasterio.open(input_path) as src:
+            kinds = {np.dtype(d).kind in "iu" for d in src.dtypes}
+    except Exception:
+        return f"{accuracy}"
+    if kinds == {True}:
+        return f"{eps_int}"
+    return f"{accuracy}-{eps_int}" if True in kinds else f"{accuracy}"
+
+
 def _resolve_num_processes(args, input_path=None):
     max_cpus = os.cpu_count() or 1
     if args.processes is not None:
@@ -494,7 +512,7 @@ def main():
                 base = os.path.splitext(os.path.basename(input_path))[0]
                 result_path = os.path.join(
                     out_dir_for_func,
-                    f"{base}_PRED_eps{config.compression.accuracy}.7z",
+                    f"{base}_PRED_eps{_name_eps(input_path, config.compression.accuracy, eps_int)}.7z",
                 )
                 result_path, max_err, valid = compress_pred_archive(
                     input_path,
@@ -530,7 +548,7 @@ def main():
                 base = os.path.splitext(os.path.basename(input_path))[0]
                 result_path = os.path.join(
                     out_dir_for_func,
-                    f"{base}_SZ3_eps{config.compression.accuracy}.7z",
+                    f"{base}_SZ3_eps{_name_eps(input_path, config.compression.accuracy, eps_int)}.7z",
                 )
                 result_path, max_err, valid = compress_sz3_archive(
                     input_path,
