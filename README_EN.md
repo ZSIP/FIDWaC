@@ -150,6 +150,7 @@ The measurements ran on a server with 32 cores and 314 GB RAM. Limiting to 4 cor
 
 - The float32 path (cm=3) uses the array search on the CPU only (no GPU kernels). Float16 is unchanged.
 - The forward DCT and the IDCT verification stay on the CPU (scipy), because only scipy gives the same rounding at ties.
+- The test scripts in `tests_batch/` contain paths of the development machine and need adjusting before use.
 
 ## System Requirements and Installation
 
@@ -158,13 +159,13 @@ The measurements ran on a server with 32 cores and 314 GB RAM. Limiting to 4 cor
 #### Operating Systems
 
 - **Windows 10 or Windows 11** with **WSL2** (Windows Subsystem for Linux 2)
-- **macOS** (Intel or Apple Silicon) with Python 3.10+
+- **macOS** (Intel or Apple Silicon) with Python 3.12+
 - **Linux** (native):
   - Debian/Ubuntu 20.04 LTS or newer
   - Fedora 35+
   - RHEL 8+
   - Arch Linux
-  - Other distributions with Python 3.9+
+  - Other distributions with Python 3.12+
 
 #### Required Components
 
@@ -173,8 +174,7 @@ The measurements ran on a server with 32 cores and 314 GB RAM. Limiting to 4 cor
 - Any Linux distribution (Debian recommended)
 
 **On Linux (WSL2 or native):**
-- Python 3.9 or newer
-- pip (Python package manager)
+- Python 3.12 or newer (required by the pinned `numpy==2.5.4`; `setup_linux.sh` picks a 3.12+ interpreter automatically)
 - Basic build tools: `build-essential` or equivalent
 - For full functionality (JPEG compression, GDAL, etc.):
   - `libgdal-dev` (Debian/Ubuntu), `gdal-devel` (Fedora/RHEL), `gdal` (Arch)
@@ -183,7 +183,7 @@ The measurements ran on a server with 32 cores and 314 GB RAM. Limiting to 4 cor
   - `7zz` (7-Zip-ZSTD) is not a distribution package: `install/setup_linux.sh` installs the newest release into `/usr/local/bin/7zz` (sudo is needed; see [Third-Party Components, Links and Licenses](#third-party-components-links-and-licenses))
 
 **On macOS:**
-- Python 3.10+ (Conda or python.org installer recommended); the web GUI needs Flask, installed from `install/requirements.txt`
+- Python 3.12+ (Conda or python.org installer recommended); the web GUI needs Flask, installed from `install/requirements.txt`
 - Homebrew packages for full functionality:
   - `gdal`
   - `jpeg-turbo`
@@ -321,7 +321,7 @@ The page has three tabs: **Compression**, **Interpolation (IDW)** (see [Interpol
 
 Choose files and folders with the **Browse…** buttons. Inputs can be rasters (GeoTIFF, PNG, JPEG, BMP, ASC, IMG) or archives (`.7z`, `.fpred`, `.sz3`); archives are decoded to GeoTIFF. Every run saves the current settings to `config.json`, the same file the command line reads. Only one job runs at a time; **Files at the same time** processes several files of a folder in parallel and shares the CPU processes between them.
 
-The **Tests** tab runs the benchmark suite `analysis/tests/run_tests.py` (not included in this branch; without it the tab only shows a hint) (FIDWAC v2 variants and SZ3, section 14) from the browser: datasets (folders of `.tif` / `.png` files; **Scan** reads the files and fills in their parameters), variants, files per dataset, workers, *Resume* (skip finished combinations) and *Dry-run* (plan only). Results go to `results_<dataset>.csv` and `features.csv` and are shown on the **Results page** (`/tests/results`). The tab is shown only when `analysis/tests/run_tests.py` exists.
+The **Tests** tab runs the benchmark suite `analysis/tests/run_tests.py` (FIDWAC v2 variants and SZ3, section 14) from the browser: datasets (folders of `.tif` / `.png` files; **Scan** reads the files and fills in their parameters), variants, files per dataset, workers, *Resume* (skip finished combinations) and *Dry-run* (plan only). Results go to `results_<dataset>.csv` and `features.csv` and are shown on the **Results page** (`/tests/results`). The tab is shown only when `analysis/tests/run_tests.py` exists.
 
 
 ### Command Line (CLI)
@@ -1660,11 +1660,15 @@ SZ3 is one to two orders of magnitude faster. FIDWAC v2 spends most of its time 
 
 Total compression ratio against the median reconstruction error per file (RMSE for the elevation models, mean colour difference ΔE76 for the UInt8 imagery); each point is one error bound ε.
 
+![Rate-distortion curves of FIDWAC v2 and SZ3](analysis/charts/rate_distortion.png)
+
 #### Derived terrain quantities (DSM, DTM)
 
 Median slope RMSE (Horn method) and median |ΔV/V| of the earthwork volume (ppm, logarithmic scale) against the error bound ε.
 
-> The rate-distortion and derived-terrain charts are in the manuscript; the benchmark harness and its chart scripts (`analysis/tests`) are not part of this branch.
+![Derived terrain quantities](analysis/charts/derived_terrain.png)
+
+> **Chart generation script:** `analysis/tests/plot_manuscript_figs.py`
 
 ---
 
@@ -1706,7 +1710,7 @@ FIDWAC v2 was used to compress data sets in a project carried out under the **IN
 
 ## 14. Benchmark Methodology (`analysis/tests`)
 
-The comparison results come from a reproducible test harness (`analysis/tests/run_tests.py`, not included in this branch) that runs every (dataset × file × error bound × variant) combination and writes one CSV row per combination.
+The comparison results come from a reproducible test harness (`analysis/tests/run_tests.py`) that runs every (dataset × file × error bound × variant) combination and writes one CSV row per combination.
 
 ### 14.1 Test matrix
 
