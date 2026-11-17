@@ -10,6 +10,7 @@
     "accuracy": 0.05,
     "block_size": 8,
     "decimal_places": 2,
+    "adaptive_sf": true,
     "dct_type": 2,
     "crs": "",
     "auto_select_block_size": true,

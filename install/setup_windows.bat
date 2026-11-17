@@ -181,14 +181,30 @@ if !USER_COUNT! gtr 0 (
 set "WSL_USER=%WSL_USER: =%"
 echo Using username: %WSL_USER%
 echo.
+wsl -d %WSL_DIST_NAME% -u root -- id -u %WSL_USER% >nul 2>&1
+if not errorlevel 1 goto user_exists
+
 echo Creating user %WSL_USER%...
-wsl -d %WSL_DIST_NAME% bash -c "if id -u %WSL_USER% > /dev/null 2>&1; then echo User already exists; else useradd -m -s /bin/bash %WSL_USER% && echo '%WSL_USER%:%WSL_USER%' | chpasswd && usermod -aG sudo %WSL_USER% && echo User created; fi"
-if errorlevel 1 (
-    echo [ERROR] Failed to create user
-    pause
-    exit /b 1
-)
-echo [OK] User %WSL_USER% ready
+wsl -d %WSL_DIST_NAME% -u root -- useradd -m -s /bin/bash %WSL_USER%
+if errorlevel 1 goto create_user_failed
+wsl -d %WSL_DIST_NAME% -u root -- usermod -aG sudo %WSL_USER%
+if errorlevel 1 goto create_user_failed
+
+REM Ask for the password twice in a hidden prompt and set it without writing it to any file or command line
+echo Enter the password for new user %WSL_USER% (it is needed for sudo during installation).
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$u = $env:WSL_USER; do { $p1 = Read-Host ('Password for ' + $u) -AsSecureString; $p2 = Read-Host 'Repeat password' -AsSecureString; $s1 = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($p1)); $s2 = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($p2)); if ($s1 -ne $s2) { Write-Host 'Passwords do not match, try again.' } elseif ($s1 -eq '') { Write-Host 'Password cannot be empty.'; $s1 = $null } } while ($s1 -ne $s2 -or [string]::IsNullOrEmpty($s1)); ($u + ':' + $s1) | & wsl.exe -d $env:WSL_DIST_NAME -u root -- chpasswd; exit $LASTEXITCODE"
+if errorlevel 1 goto create_user_failed
+echo [OK] User %WSL_USER% created
+goto user_ready
+
+:user_exists
+echo User %WSL_USER% already exists. Its password is not changed.
+goto user_ready
+
+:create_user_failed
+echo [ERROR] Failed to create user
+pause
+exit /b 1
 
 :user_ready
 echo.
@@ -228,7 +244,8 @@ echo.
 
 REM Run Linux setup script
 echo Running installation in WSL2 distribution: %WSL_DIST_NAME%...
-wsl -d %WSL_DIST_NAME% bash -c "cd '%SCRIPT_PATH_WSL%' && bash install/setup_linux.sh"
+REM Run as the selected user explicitly: the new default user from wsl.conf applies only after restart
+wsl -d %WSL_DIST_NAME% -u %WSL_USER% bash -c "cd '%SCRIPT_PATH_WSL%' && bash install/setup_linux.sh"
 if errorlevel 1 (
     echo [ERROR] Installation in WSL2 failed
     pause

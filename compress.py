@@ -90,6 +90,13 @@ Supported input formats: GeoTIFF, PNG+PNGW, JPEG+JGW, BMP+BPW, ASC, Erdas Imagin
         default=None,
         help="Number of decimal places for scaling (default: 2)",
     )
+    parser.add_argument(
+        "--adaptive-sf",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Float DCT: scaling factor from the accuracy + finer step for the blocks that need it "
+        "(archive format v4 when such blocks exist; default on). --no-adaptive-sf: sf = 10^decimal_places",
+    )
     parser.add_argument("--processes", "-p", type=int, help="Number of processes")
     parser.add_argument(
         "--gpu",
@@ -235,6 +242,8 @@ def _apply_args_to_config(args: argparse.Namespace, config: Config) -> None:
         c.auto_select_block_size = True
     if args.decimal_places is not None:
         c.decimal_places = args.decimal_places
+    if args.adaptive_sf is not None:
+        c.adaptive_sf = args.adaptive_sf
     if args.uint8_accuracy_mode is not None:
         c.uint8_accuracy_mode = args.uint8_accuracy_mode
     if args.uint8_accuracy is not None:

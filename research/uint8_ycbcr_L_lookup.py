@@ -12,7 +12,7 @@ research/build_uint8_lookup_from_features.py does for the old uint8 pipeline.
 Typical workflow from the repository root:
 
 python3 research/uint8_ycbcr_L_lookup.py collect \
-  --dataset /path/to/multi_uint_6ch \
+  --dataset /home/infostrateg/temp/source/multi_uint_6ch \
   --output results/ycbcr_features \
   --block-sizes 8 \
   --scaling-factors 1,10 \
@@ -919,7 +919,7 @@ def main() -> None:
         choices=["collect", "build", "profile"],
         help="Use collect for long training; profile diagnoses one real file",
     )
-    parser.add_argument("--dataset", default="/path/to/multi_uint_6ch")
+    parser.add_argument("--dataset", default="/home/infostrateg/temp/source/multi_uint_6ch")
     parser.add_argument("--output", default="results/ycbcr_features")
     parser.add_argument("--models", default="models")
     parser.add_argument("--num-files", type=int, default=0, help="0 = all files")

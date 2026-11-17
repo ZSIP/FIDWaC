@@ -21,9 +21,10 @@ from engine.utils import decode_mask_rle, decode_mask_rle_rows, integer_range
 from config import Config, load_config
 from compress.output_crs import crs_from_header
 from core.codec import decode_vlq, dc_median_ac_decode
-from core.dct import _get_zigzag_indices
+from core.dct import _get_zigzag_indices, fft_workers
 
 STRIP_PIXELS = 16 * 1024 * 1024  # pixels per strip of the strip-wise decoders
+ARCHIVE_FORMAT_VERSION = 4  # newest "v" of the flat archive this decoder reads (v4: per-block "x")
 STREAMING_CHANNEL_BYTES = 256 * 1024 * 1024  # channels larger than this are decoded strip by strip into the GeoTIFF
 
 # Batched reconstruction of the cm=6 Y/Cb/Cr planes: one IDCT call per batch of blocks (falls back
@@ -164,10 +165,11 @@ def _reconstruct_plane_strip(coeffs, lengths, n, scaling_factor, padded_W, row0,
     return out.reshape(row1 - row0, bpr, n, n).transpose(0, 2, 1, 3).reshape((row1 - row0) * n, padded_W)
 
 
-def _idct_block_batches(coeffs, pos, Ls, n, scaling_factor):
+def _idct_block_batches(coeffs, pos, Ls, n, scaling_factor, block_sf=None):
     """Yield (block indices, float64 IDCT) for the blocks `pos` that store `Ls` coefficients each,
     in batches of about 4M coefficients. `coeffs` is the flat array in block order. The axis order
-    is the one of idct2 on a single 2D block, so every block equals the one of reconstruct_block."""
+    is the one of idct2 on a single 2D block, so every block equals the one of reconstruct_block.
+    block_sf: scaling factor of each block of `pos` (format v4 exceptions), None = scaling_factor."""
     idx = _get_zigzag_indices(n)[: n * n]
     starts = np.concatenate(([0], np.cumsum(Ls)[:-1])).astype(np.int64)
     chunk = max(256, (1 << 22) // (n * n))
@@ -178,10 +180,29 @@ def _idct_block_batches(coeffs, pos, Ls, n, scaling_factor):
         cols = np.arange(tot) - np.repeat(np.cumsum(Lc) - Lc, Lc)
         dest = np.repeat(np.arange(len(p)) * (n * n), Lc) + idx[cols]
         mat = np.zeros((len(p), n * n), dtype=np.float64)
-        mat.reshape(-1)[dest] = coeffs[s0 : s0 + tot] / scaling_factor
+        divisor = scaling_factor if block_sf is None else np.repeat(block_sf[a : a + chunk], Lc)
+        mat.reshape(-1)[dest] = coeffs[s0 : s0 + tot] / divisor
+        w = fft_workers(mat.size)
         yield p, idct(
-            idct(mat.reshape(-1, n, n), axis=1, norm="ortho", type=2), axis=2, norm="ortho", type=2
+            idct(mat.reshape(-1, n, n), axis=1, norm="ortho", type=2, workers=w),
+            axis=2, norm="ortho", type=2, workers=w,
         )
+
+
+def _block_scaling(ch_data, n_blocks, scaling_factor):
+    """Scaling factor of every block of a channel as a float64 array when the channel holds per-block
+    exceptions (format v4, key "x" = [gaps, levels]: block index = running sum of the gaps, factor
+    scaling_factor * 10**level), else None (one factor for the whole channel)."""
+    exc = ch_data.get("x")
+    if not exc or not exc[0]:
+        return None
+    idx = np.cumsum(np.asarray(exc[0], dtype=np.int64))
+    levels = np.asarray(exc[1], dtype=np.int64)
+    if idx.size != levels.size or idx[-1] >= n_blocks or (levels < 0).any():
+        raise ValueError("corrupted per-block scaling exceptions (key 'x') in the archive")
+    block_sf = np.full(n_blocks, float(scaling_factor))
+    block_sf[idx] = float(scaling_factor) * 10.0 ** levels
+    return block_sf
 
 
 def _channel_batchable(coeffs, lengths, n, padded_H, padded_W):
@@ -196,19 +217,21 @@ def _channel_batchable(coeffs, lengths, n, padded_H, padded_W):
 
 def _reconstruct_channel_batched(
     coeffs, lengths, masks_dict, cm, int_dtype, result_dtype, n, scaling_factor,
-    padded_W, nodata_value, nodata_guard, row0, row1, coeff_start=0,
+    padded_W, nodata_value, nodata_guard, row0, row1, coeff_start=0, block_sf=None,
 ):
     """cm=3 / cm=5 block rows row0..row1 of a channel as the block loop of _decompress_single_channel
     builds them, with one IDCT call per batch of blocks. Blocks with stored coefficients go through
     the batch; empty, NoData and masked (length -2) blocks are filled as in the loop.
     `coeffs` and `lengths` are numpy arrays of the whole channel (see _channel_batchable) and
     coeff_start is the position in `coeffs` of the first block of the strip.
+    block_sf: scaling factor of every block of the channel (_block_scaling) or None.
     Returns the strip of (row1 - row0) * n rows and padded_W columns."""
     bpr = padded_W // n
     first, last = row0 * bpr, row1 * bpr
     ln = lengths[first:last]
     pos = np.nonzero(ln > 0)[0]
     Ls = ln[pos]
+    strip_sf = None if block_sf is None else block_sf[first:last][pos]
     uint8_mode = cm == 5
     if uint8_mode:
         centre, lo, hi = integer_range(int_dtype or "uint8")
@@ -217,7 +240,7 @@ def _reconstruct_channel_batched(
     if nodata_blocks.any():
         out[nodata_blocks] = nodata_value if nodata_value is not None else 0
     strip_coeffs = coeffs[coeff_start : coeff_start + int(Ls.sum())]
-    for p, rec in _idct_block_batches(strip_coeffs, pos, Ls, n, scaling_factor):
+    for p, rec in _idct_block_batches(strip_coeffs, pos, Ls, n, scaling_factor, strip_sf):
         if uint8_mode:
             rec = np.clip(np.round(rec + centre), lo, hi).astype(np.float32)
             if nodata_guard is not None and lo <= nodata_guard <= hi:
@@ -230,7 +253,7 @@ def _reconstruct_channel_batched(
             out[k] = reconstruct_block(
                 masks_dict[idx],
                 n,
-                scaling_factor,
+                scaling_factor if block_sf is None else block_sf[idx],
                 nodata_value,
                 uint8_mode=uint8_mode,
                 src_dtype=int_dtype,
@@ -553,14 +576,12 @@ def _decompress_single_channel(
         # uint8 accuracy mode: DC-AC format, coefficients in centered space
         if isinstance(raw_c, list) and len(raw_c) == 2:
             dc_data, ac_data = raw_c
-            coeffs_arr = dc_median_ac_decode(dc_data, ac_data, lengths, blocks_per_row)
-            coeffs = coeffs_arr.tolist()
+            coeffs = dc_median_ac_decode(dc_data, ac_data, lengths, blocks_per_row)
         else:
             coeffs = []
     elif cm == 3 and isinstance(raw_c, list) and len(raw_c) == 2:
         dc_data, ac_data = raw_c
-        coeffs_arr = dc_median_ac_decode(dc_data, ac_data, lengths, blocks_per_row)
-        coeffs = coeffs_arr.tolist()
+        coeffs = dc_median_ac_decode(dc_data, ac_data, lengths, blocks_per_row)
     elif version >= 2 and isinstance(raw_c, (bytes, bytearray)):
         coeffs = decode_vlq(raw_c)
     else:
@@ -573,10 +594,16 @@ def _decompress_single_channel(
     result_dtype = np.dtype(int_dtype) if cm == 5 else (np.uint8 if cm == 4 else np.float32)
     lengths_np = np.asarray(lengths, dtype=np.int64)
     coeffs_np = np.asarray(coeffs, dtype=np.float64)
+    block_sf = _block_scaling(ch_data, len(lengths_np), scaling_factor)
+
+    def _sf(idx):
+        return scaling_factor if block_sf is None else block_sf[idx]
+
     if _channel_batchable(coeffs_np, lengths_np, block_size, padded_H, padded_W):
         plane = _reconstruct_channel_batched(
             coeffs_np, lengths_np, masks_dict, cm, int_dtype, result_dtype, block_size,
             scaling_factor, padded_W, nodata_value, nodata_guard, 0, padded_H // block_size,
+            block_sf=block_sf,
         )
         return plane[:H, :W]
     result = np.zeros((padded_H, padded_W), dtype=result_dtype)
@@ -600,7 +627,7 @@ def _decompress_single_channel(
                 block = reconstruct_block(
                     masks_dict[idx],
                     block_size,
-                    scaling_factor,
+                    _sf(idx),
                     nodata_value,
                     uint8_mode=(cm == 5),
                     src_dtype=int_dtype,
@@ -609,11 +636,13 @@ def _decompress_single_channel(
                 result[y : y + block_size, x : x + block_size] = block
         else:
             block_coeffs = coeffs[coeff_pos : coeff_pos + length]
+            if isinstance(block_coeffs, np.ndarray):
+                block_coeffs = block_coeffs.tolist()
             coeff_pos += length
             block = reconstruct_block(
                 block_coeffs,
                 block_size,
-                scaling_factor,
+                _sf(idx),
                 nodata_value,
                 uint8_mode=(cm == 5),
                 src_dtype=int_dtype,
@@ -678,6 +707,11 @@ def _decompress_single_channel_streaming(
     int_dtype = ch_data.get("dt", "uint8") if cm == 5 else None
     block_dtype = np.dtype(int_dtype) if cm == 5 else (np.uint8 if cm == 4 else np.float32)
 
+    block_sf = _block_scaling(ch_data, len(lengths), scaling_factor)
+
+    def _sf(idx):
+        return scaling_factor if block_sf is None else block_sf[idx]
+
     if cm != 4:
         lengths_np = np.asarray(lengths, dtype=np.int64)
         coeffs_np = np.asarray(coeffs, dtype=np.float64)
@@ -693,7 +727,7 @@ def _decompress_single_channel_streaming(
                 strip = _reconstruct_channel_batched(
                     coeffs_np, lengths_np, masks_dict, cm, int_dtype, block_dtype, block_size,
                     scaling_factor, padded_W, nodata_value, nodata_guard, r0, r1,
-                    int(starts[r0 * blocks_per_row]),
+                    int(starts[r0 * blocks_per_row]), block_sf,
                 )
                 h = min((r1 - r0) * block_size, H - r0 * block_size)
                 window = Window(0, r0 * block_size, W, h)
@@ -726,7 +760,7 @@ def _decompress_single_channel_streaming(
                 block = reconstruct_block(
                     masks_dict[idx],
                     block_size,
-                    scaling_factor,
+                    _sf(idx),
                     nodata_value,
                     uint8_mode=(cm == 5),
                     src_dtype=int_dtype,
@@ -742,7 +776,7 @@ def _decompress_single_channel_streaming(
             block = reconstruct_block(
                 block_coeffs,
                 block_size,
-                scaling_factor,
+                _sf(idx),
                 nodata_value,
                 uint8_mode=(cm == 5),
                 src_dtype=int_dtype,
@@ -789,6 +823,18 @@ def decompress_image(
         output_nodata = nodata_value  # None if source had no nodata
         scaling_factor = dcv_compress.get("sf", dcv_compress.get("f", config.scaling_factor))
         is_flat_format = True
+        if version > ARCHIVE_FORMAT_VERSION:
+            raise ValueError(
+                f"Archive format v{version} is newer than this FIDWAC supports "
+                f"(v{ARCHIVE_FORMAT_VERSION}); update FIDWAC to decompress it"
+            )
+        if not config.output.quiet and version >= 4:
+            n_exc = sum(
+                len(ch["x"][0])
+                for ch in [dcv_compress, *dcv_compress.get("channels", [])]
+                if isinstance(ch, dict) and ch.get("x")
+            )
+            print(f"  Archive format v{version}: {n_exc} blocks with a finer scaling step (marker 'x')")
     else:
         # legacy format
         block_size = dcv_compress.get("block_size", config.compression.block_size)
@@ -900,6 +946,7 @@ def decompress_image(
                     "m": dcv_compress.get("m", []),
                     "cm": dcv_compress.get("cm", 0),
                     "dt": dcv_compress.get("dt", "uint8"),
+                    "x": dcv_compress.get("x"),
                 }
                 _decompress_single_channel_streaming(
                     ch_data,
@@ -978,6 +1025,7 @@ def decompress_image(
                     "m": dcv_compress.get("m", []),
                     "cm": dcv_compress.get("cm", 0),
                     "dt": dcv_compress.get("dt", "uint8"),
+                    "x": dcv_compress.get("x"),
                 }
                 ch_result = _decompress_single_channel(
                     ch_data,

@@ -27,6 +27,9 @@ class CompressionConfig:
     accuracy: float = 0.05
     block_size: int = 16
     decimal_places: int = 2
+    # float DCT (cm=3): scaling factor chosen from the accuracy on a sample of blocks; blocks that do not
+    # hold the accuracy with it get a 10/100/1000x finer step (per-block exceptions, archive format v4)
+    adaptive_sf: bool = True
     dct_type: int = 2
     crs: str = ""  # "" = CRS of the input file, "none" = no CRS, or an EPSG/WKT string
     auto_select_block_size: bool = False
@@ -267,6 +270,7 @@ def _parse_config(data: Dict[str, Any]) -> Config:
         accuracy=comp.get("accuracy", 0.05),
         block_size=comp.get("block_size", 16),
         decimal_places=comp.get("decimal_places", 2),
+        adaptive_sf=bool(comp.get("adaptive_sf", True)),
         dct_type=comp.get("dct_type", 2),
         crs=comp.get("crs", ""),
         auto_select_block_size=comp.get("auto_select_block_size", False),
@@ -366,6 +370,7 @@ def save_config(config: Config, config_path: str) -> None:
             "accuracy": config.compression.accuracy,
             "block_size": config.compression.block_size,
             "decimal_places": config.compression.decimal_places,
+            "adaptive_sf": config.compression.adaptive_sf,
             "dct_type": config.compression.dct_type,
             "crs": config.compression.crs,
             "auto_select_block_size": config.compression.auto_select_block_size,

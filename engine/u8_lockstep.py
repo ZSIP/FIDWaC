@@ -13,7 +13,7 @@ import numba as nb
 import numpy as np
 from scipy.fft import idct as _sidct
 
-from core.dct import _get_zigzag_indices
+from core.dct import _get_zigzag_indices, fft_workers, in_forked_process
 from engine import gpu_u8
 from engine.gpu_u8 import phases as gpu_phases
 from engine.refine import _l2_tail, _nb_eval_fast, _nb_tail_l2
@@ -110,6 +110,12 @@ def pre_par(ZZ, ORIG, ACC, BS, basis2, LPRE, brk):
 
 
 @nb.njit(cache=True)
+def pre_seq(ZZ, ORIG, ACC, BS, basis2, LPRE, brk):
+    for i in range(ZZ.shape[0]):
+        LPRE[i] = _pre_row(ZZ[i], ORIG[i], ACC[i], BS[i], basis2, brk)
+
+
+@nb.njit(cache=True)
 def _quant_row(zz, orig, acc, sf, basis2, L0, LF, ERR, RES, i):
     """Phase 3 for one row: quantise from L0 and check the quantised error."""
     L = L0
@@ -138,6 +144,23 @@ def quant_par(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES):
         _quant_row(ZZ[i], ORIG[i], ACC[i], SF[i], basis2, LIN[i], LF, ERR, RES, i)
 
 
+@nb.njit(cache=True)
+def quant_seq(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES):
+    for i in range(ZZ.shape[0]):
+        _quant_row(ZZ[i], ORIG[i], ACC[i], SF[i], basis2, LIN[i], LF, ERR, RES, i)
+
+
+def _pre_cpu(ZZ, ORIG, ACC, BS, basis2, LPRE, brk):
+    """Phase 1 on the CPU: the rows in parallel, or one by one in a forked Pool worker, where a
+    parallel kernel must not start and the sibling workers hold the other cores."""
+    (pre_seq if in_forked_process() else pre_par)(ZZ, ORIG, ACC, BS, basis2, LPRE, brk)
+
+
+def _quant_cpu(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES):
+    """Phase 3 on the CPU, with the same choice of kernel as _pre_cpu."""
+    (quant_seq if in_forked_process() else quant_par)(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES)
+
+
 # phase 2 - full IDCT verification (scipy, vectorised over rows)
 def _classic_err(ZZ, ORIG, L):
     """max |orig + 128 - clip(round(idct(coeffs[:L]) + 128))| per row (classic path)."""
@@ -148,8 +171,9 @@ def _classic_err(ZZ, ORIG, L):
     flat = np.zeros((m, nn))
     flat[:, _get_zigzag_indices(n)] = coeffs
     # scipy idct2 of a block: axis 0 first, then axis 1 (as core.dct.idct2)
-    rec = _sidct(_sidct(flat.reshape(m, n, n), axis=1, norm="ortho", type=2),
-                 axis=2, norm="ortho", type=2).reshape(m, nn)
+    w = fft_workers(flat.size)
+    rec = _sidct(_sidct(flat.reshape(m, n, n), axis=1, norm="ortho", type=2, workers=w),
+                 axis=2, norm="ortho", type=2, workers=w).reshape(m, nn)
     rec_u8 = np.clip(np.rint(rec + CU8), LO8, HI8)
     diff = (ORIG + CU8) - rec_u8
     return np.maximum(diff.max(axis=1), -diff.min(axis=1))
@@ -198,7 +222,7 @@ def _run_pre(ZZ, ORIG, ACC, BS, basis2, LPRE, use_gpu, brk):
             return
         except RuntimeError as exc:
             gpu_u8.warn_once(f"GPU pre phase failed, using CPU: {exc}")
-    pre_par(ZZ, ORIG, ACC, BS, basis2, LPRE, brk)
+    _pre_cpu(ZZ, ORIG, ACC, BS, basis2, LPRE, brk)
 
 
 def _run_quant(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES, use_gpu):
@@ -208,7 +232,7 @@ def _run_quant(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES, use_gpu):
             return
         except RuntimeError as exc:
             gpu_u8.warn_once(f"GPU quant phase failed, using CPU: {exc}")
-    quant_par(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES)
+    _quant_cpu(ZZ, ORIG, ACC, SF, basis2, LIN, LF, ERR, RES)
 
 
 def search_u8(ZZ, ORIG, ACC, SF, BS, basis2, LF, ERR, RES, brk=3):
@@ -224,9 +248,9 @@ def search_u8(ZZ, ORIG, ACC, SF, BS, basis2, LF, ERR, RES, brk=3):
 def search_u8_cpu(ZZ, ORIG, ACC, SF, BS, basis2, LF, ERR, RES, brk=3):
     """The three phases on the CPU only (numba prange and scipy verification)."""
     LPRE = np.zeros(ZZ.shape[0], dtype=np.int64)
-    pre_par(ZZ, ORIG, ACC, BS, basis2, LPRE, brk)
+    _pre_cpu(ZZ, ORIG, ACC, BS, basis2, LPRE, brk)
     LV = classic_verify(ZZ, ORIG, ACC, LPRE)
-    quant_par(ZZ, ORIG, ACC, SF, basis2, LV, LF, ERR, RES)
+    _quant_cpu(ZZ, ORIG, ACC, SF, basis2, LV, LF, ERR, RES)
 
 
 def _dc_only_rows(ZZr, ORGr, ACCr, SFr, basis2):

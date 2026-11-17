@@ -30,6 +30,97 @@ _STREAMING_THRESHOLD = 256 * 1024 * 1024  # bytes — ~256 MB for float32
 
 
 
+def decimals_for_sf(sf: float) -> int:
+    """Decimal places the DCT is rounded to before quantisation with the scaling factor sf: log10(sf)
+    for a power of ten (the classic sf = 10**decimal_places), one digit finer than the step otherwise."""
+    lg = float(np.log10(sf))
+    if abs(lg - round(lg)) < 1e-9:
+        return max(0, int(round(lg)))
+    return max(0, int(np.ceil(lg)) + 1)
+
+
+def scaled_config(config: Config, sf: int, quiet: Optional[bool] = None) -> Config:
+    """Copy of config that quantises float DCT coefficients with the scaling factor sf."""
+    from copy import deepcopy
+
+    cfg = deepcopy(config)
+    cfg._scaling_factor_override = int(sf)
+    cfg.compression.decimal_places = decimals_for_sf(sf)
+    if quiet is not None:
+        cfg.output.quiet = quiet
+    return cfg
+
+
+SF_EXCEPTION_LEVELS = 3  # per-block exceptions: sf * 10, sf * 100, sf * 1000
+_SF_MULTIPLIERS = (0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0)  # candidate steps, in units of the accuracy
+
+
+def select_scaling_factor(image: np.ndarray, n: int, nodata_value: Optional[float], config: Config) -> int:
+    """Global scaling factor of a float DCT channel (cm=3) with per-block exceptions: candidates
+    around 1/accuracy and 10**decimal_places, each scored on up to auto_select_sample_size clean
+    blocks of `image` as the LZMA size of the stored streams, the blocks that miss the accuracy coded
+    with the exception steps (as the compressor does). Returns the candidate with the smallest size."""
+    import lzma
+
+    from core.codec import dc_median_ac_encode
+    from core.dct import _get_zigzag_indices, dct2
+    from engine.f32_arrays import search_f32
+
+    acc = float(config.compression.accuracy)
+    base = int(10 ** config.compression.decimal_places)
+    if acc <= 0:
+        return base
+    padded, _ = pad_image(np.asarray(image, dtype=np.float32), n)
+    H, W = padded.shape
+    grid = padded.reshape(H // n, n, W // n, n).transpose(0, 2, 1, 3).reshape(-1, n, n)
+    clean = np.isfinite(grid).all(axis=(1, 2)) & ~(grid == 0).any(axis=(1, 2))
+    if nodata_value is not None:
+        clean &= ~(grid == nodata_value).any(axis=(1, 2))
+    idx = np.flatnonzero(clean)
+    if idx.size == 0:
+        return base
+    max_sample = int(config.compression.auto_select_sample_size)
+    idx = idx[:: max(1, idx.size // max_sample)][:max_sample]
+    blocks = np.ascontiguousarray(grid[idx])
+    zz_idx = _get_zigzag_indices(n)
+    backscan = int(config.model.minimize_backscan)
+    brk = int(config.model.backscan_break_after)
+    t = config.compression.dct_type
+
+    def search(rows, sf):
+        dct = np.round(dct2(blocks[rows], t), decimals_for_sf(sf))
+        zz = np.ascontiguousarray(dct.reshape(rows.size, -1)[:, zz_idx], dtype=np.float32)
+        lf, err, coeffs = search_f32(zz, blocks[rows], np.full(rows.size, acc), sf, t, backscan, brk)
+        ends = np.cumsum(lf)
+        return lf, err, [coeffs[e - L : e] for L, e in zip(lf, ends)]
+
+    candidates = sorted({max(1, int(round(m / acc))) for m in _SF_MULTIPLIERS} | {base})
+    sizes = {}
+    for sf in candidates:
+        rows = np.arange(len(blocks))
+        lf, err, parts = search(rows, sf)
+        level = np.zeros(len(blocks), dtype=np.int64)
+        for k in range(1, SF_EXCEPTION_LEVELS + 1):
+            fail = np.flatnonzero(err > acc)
+            if fail.size == 0:
+                break
+            lf_k, err_k, parts_k = search(fail, sf * 10**k)
+            lf[fail], err[fail], level[fail] = lf_k, err_k, k
+            for j, i in enumerate(fail):
+                parts[i] = parts_k[j]
+        coeffs = np.concatenate(parts).astype(np.int64)
+        dc, ac = dc_median_ac_encode(coeffs, lf.tolist(), max(1, int(np.sqrt(len(blocks)))))
+        exc = np.flatnonzero(level)
+        stream = {"l": lf.tolist(), "c": [dc, ac],
+                  "x": [np.diff(exc, prepend=0).tolist(), level[exc].tolist()]}
+        sizes[sf] = len(lzma.compress(msgpack.packb(stream, use_bin_type=True), preset=6))
+    best = min(candidates, key=lambda sf: (sizes[sf], -sf))
+    if not config.output.quiet:
+        listing = ", ".join(f"{sf}:{sizes[sf] / len(blocks):.1f}" for sf in candidates)
+        print(f"  Adaptive sf: sample of {len(blocks)} blocks, bytes/block {{{listing}}} -> sf={best}")
+    return best
+
+
 def pad_image(image: np.ndarray, block_size: int) -> Tuple[np.ndarray, Tuple[int, int]]:
     """Pad image to multiple of block_size."""
     H, W = image.shape
@@ -73,7 +164,7 @@ def _sample_results_f32(grid, idx, test_n, config, nodata_value, dtype=np.float3
     NoData with values go through process_block. process_block transforms a single block with
     dct2 on 2-D input (rows first), so the sample DCT uses the same axis order."""
     from scipy.fft import dct
-    from core.dct import _get_zigzag_indices
+    from core.dct import _get_zigzag_indices, fft_workers
     from engine.f32_arrays import search_f32
 
     m = len(idx)
@@ -93,16 +184,19 @@ def _sample_results_f32(grid, idx, test_n, config, nodata_value, dtype=np.float3
         zz_idx = _get_zigzag_indices(test_n)
         C = np.ascontiguousarray(A[todo])
         t = config.compression.dct_type
-        dct_c = dct(dct(C, axis=1, norm="ortho", type=t), axis=2, norm="ortho", type=t)
+        w = fft_workers(C.size)
+        dct_c = dct(dct(C, axis=1, norm="ortho", type=t, workers=w), axis=2, norm="ortho", type=t, workers=w)
         dct_c = np.round(dct_c, config.compression.decimal_places)
         zz = np.ascontiguousarray(dct_c.reshape(todo.size, -1)[:, zz_idx], dtype=np.float32)
-        LF, ERR, RES = search_f32(
+        LF, ERR, coeffs = search_f32(
             zz, C, np.full(todo.size, float(config.compression.accuracy)), config.scaling_factor,
             t, backscan=int(config.model.minimize_backscan),
             brk=int(config.model.backscan_break_after),
         )
+        coeffs = coeffs.tolist()
+        ends = np.cumsum(LF).tolist()
         for j, i in enumerate(todo):
-            compressed[int(i)] = RES[j, : int(LF[j])].tolist()
+            compressed[int(i)] = coeffs[ends[j] - int(LF[j]) : ends[j]]
             errors[int(i)] = float(ERR[j])
     for i in np.flatnonzero(~(allzero | allnd | clean)):
         _, comp, err = process_block((int(idx[i]), grid[idx[i]], nodata_value), config)
@@ -230,7 +324,7 @@ def auto_select_uint8_parameters(
                     acm_values = []
                     zr_values = []
 
-                    for block_data in sample_blocks:
+                    for _, block_data, _ in sample_blocks:
                         try:
                             dct = dct2(block_data)
                             zigzag = to_zigzag(dct)
@@ -249,6 +343,10 @@ def auto_select_uint8_parameters(
                         avg_zr = np.median(zr_values)
 
                         sf, bs = predict_uint8_parameters(avg_acm, avg_zr, grid_data)
+
+                        allowed = getattr(config.compression, "allowed_block_sizes", None)
+                        if allowed and int(bs) not in allowed:
+                            raise ValueError(f"grid block size {bs} not in allowed {list(allowed)}")
 
                         if not config.output.quiet:
                             print(
@@ -354,8 +452,8 @@ def auto_select_uint8_parameters(
 
 def serialize_compressed_blocks(
     compressed_blocks: List,
-) -> Tuple[List[int], np.ndarray, List]:
-    """Convert compressed_blocks list → (lengths, coeffs_np, masks_data).
+) -> Tuple[np.ndarray, np.ndarray, List]:
+    """Convert compressed_blocks list → (lengths, coeffs_np, masks_data), both arrays int64.
 
     Sentinel values:
         0  → ALL_ZEROS  → length 0
@@ -386,7 +484,7 @@ def serialize_compressed_blocks(
             lengths.append(0)
 
     coeffs_np = np.concatenate(coeff_arrays) if coeff_arrays else np.empty(0, dtype=np.int64)
-    return lengths, coeffs_np, masks_data
+    return np.array(lengths, dtype=np.int64), coeffs_np, masks_data
 
 
 def serialize_compressed_blocks_rgb(

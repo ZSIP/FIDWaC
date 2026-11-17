@@ -760,7 +760,7 @@ if __name__ == "__main__":
         print("  python heuristic_uint8_trainer.py train <statistics_json>")
         print("\nExample:")
         print(
-            "  python heuristic_uint8_trainer.py collect /path/to/multi_uint_6ch 1000"
+            "  python heuristic_uint8_trainer.py collect /mnt/g/FIDWAC_2026/dane/source/multi_uint_6ch 1000"
         )
         print(
             "  python heuristic_uint8_trainer.py train ./training_data_uint8/channel_statistics.json"

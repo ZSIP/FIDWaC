@@ -12,8 +12,8 @@ This guide contains complete installation instructions for Windows (WSL2), Linux
   - Fedora 35+
   - RHEL 8+
   - Arch Linux
-  - Other distributions with Python 3.9+
-- macOS (Intel or Apple Silicon) with Python 3.10+
+  - Other distributions with Python 3.12+
+- macOS (Intel or Apple Silicon) with Python 3.12+
 
 ### Required Components
 
@@ -22,8 +22,7 @@ On Windows:
 - Any Linux distribution (Debian recommended)
 
 On Linux (WSL2 or native):
-- Python 3.9 or newer
-- pip (Python package manager)
+- Python 3.12 or newer (required by the pinned `numpy==2.5.4`; `setup_linux.sh` picks a 3.12+ interpreter automatically)
 - Basic build tools: build-essential or equivalent
 - For full functionality (JPEG compression, GDAL, etc.):
   - libgdal-dev (Debian/Ubuntu), gdal-devel (Fedora/RHEL), gdal (Arch)
@@ -32,7 +31,7 @@ On Linux (WSL2 or native):
   - 7zz (7-Zip-ZSTD) is not a distribution package: `install/setup_linux.sh` installs the newest release to `/usr/local/bin/7zz` (sudo needed, see [7-Zip-ZSTD](#7-zip-zstd-7zz-7z-archives))
 
 On macOS:
-- Python 3.10+ (Conda or python.org installer recommended); the web GUI needs Flask from `install/requirements.txt`
+- Python 3.12+ (Conda or python.org installer recommended); the web GUI needs Flask from `install/requirements.txt`
 - Homebrew packages for full functionality:
   - gdal
   - jpeg-turbo

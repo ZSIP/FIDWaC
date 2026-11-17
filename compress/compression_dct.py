@@ -40,6 +40,7 @@ from engine.blocks import (
     rgb_to_ycbcr,
 )
 from config import Config
+from core.dct import _get_idct_basis
 from engine.utils import RleBuilder, interpolate_zeros
 from .compression_utils import (
     pad_image,
@@ -47,9 +48,12 @@ from .compression_utils import (
     auto_select_block_size,
     auto_select_uint8_parameters,
     serialize_compressed_blocks,
+    select_scaling_factor,
+    scaled_config,
+    SF_EXCEPTION_LEVELS,
 )
 
-_DctResult = Tuple[List, np.ndarray, List, float, bool, int, Tuple[int, int]]
+_DctResult = Tuple[np.ndarray, np.ndarray, List, float, bool, int, Tuple[int, int]]
 
 RGB_STRIP_PIXELS = 8 * 1024 * 1024  # pixels per strip of block rows in the cm=6 compression
 DCT_STRIP_PIXELS = 16 * 1024 * 1024  # bands above this many pixels are compressed strip by strip
@@ -64,11 +68,13 @@ def compress_channel_dct(
     config: Config,
     num_processes: int,
     src_dtype: Optional[str] = None,
+    errors_out: Optional[list] = None,
 ) -> _DctResult:
     """Compress a single channel in-memory.
 
     For integer dtypes, forces binary search (accuracy mode).
     Retries with smaller block size if validity fails.
+    errors_out: when given, receives the float64 array of the error of every block as its only item.
     """
     is_integer = src_dtype in _INTEGER_DTYPES
 
@@ -98,15 +104,14 @@ def compress_channel_dct(
             config.compression.block_size = block_size
 
     padded_image, padded_shape = pad_image(image, block_size)
-    compressed_blocks, max_errors, skipped = _compress_padded_blocks(
+    lengths, coeffs_np, masks_data, max_errors, skipped = _compress_padded_blocks(
         padded_image, block_size, nodata_value, config, is_integer, src_dtype, num_processes
     )
     if not config.output.quiet:
-        print(f"  Total blocks: {len(compressed_blocks)} (skipped {skipped} trivial)")
+        print(f"  Total blocks: {len(lengths)} (skipped {skipped} trivial)")
 
-    max_error_global = max(max_errors) if max_errors else 0.0
     # Use config.compression.accuracy (channel-specific for YCbCr, or global uint8_accuracy)
-    validity = all(e <= config.compression.accuracy for e in max_errors)
+    max_error_global, validity = _error_summary(max_errors, config.compression.accuracy)
 
     if not validity and config.compression.auto_select_block_size and block_size > 8:
         return _retry_with_smaller_n(
@@ -118,17 +123,48 @@ def compress_channel_dct(
             max_errors,
             src_dtype,
             in_memory=True,
+            errors_out=errors_out,
         )
+    if errors_out is not None:
+        errors_out[:] = [np.asarray(max_errors, dtype=np.float64)]
 
-    lengths, coeffs_np, masks_data = serialize_compressed_blocks(compressed_blocks)
     return lengths, coeffs_np, masks_data, max_error_global, validity, block_size, padded_shape
+
+
+def _error_summary(max_errors, accuracy):
+    """(largest error, all errors within accuracy) of the per-block errors: a float64 array from the
+    array paths, a list from the per-block path."""
+    if isinstance(max_errors, np.ndarray):
+        largest = float(max_errors.max()) if max_errors.size else 0.0
+        return largest, bool((max_errors <= accuracy).all())
+    return (max(max_errors) if max_errors else 0.0), all(e <= accuracy for e in max_errors)
+
+
+def _insert_blocks(lengths, coeffs, blocks):
+    """Put per-block results (dict: block index -> compressed block) into the serialised form of an
+    array path, where these blocks hold length 0 and no coefficients. Returns (lengths, coeffs,
+    masks_data) as serialize_compressed_blocks gives them for all blocks together."""
+    idx = np.array(sorted(blocks), dtype=np.int64)
+    own_lengths, own_coeffs, own_masks = serialize_compressed_blocks([blocks[int(i)] for i in idx])
+    lengths[idx] = own_lengths
+    masks_data = [[int(idx[j]), mask] for j, mask in own_masks]
+    if own_coeffs.size:
+        own = np.zeros(lengths.size, dtype=bool)
+        own[idx] = True
+        from_own = np.repeat(own, np.maximum(lengths, 0))  # per coefficient of the merged stream
+        merged = np.empty(from_own.size, dtype=np.int64)
+        merged[from_own] = own_coeffs
+        merged[~from_own] = coeffs
+        coeffs = merged
+    return lengths, coeffs, masks_data
 
 
 def _compress_padded_blocks(padded_image, block_size, nodata_value, config, is_integer, src_dtype,
                             num_processes):
     """Compress the blocks of a padded image (or strip of block rows): whole arrays on the GPU session /
-    numba where they apply, the per-block path otherwise. Returns (compressed_blocks, max_errors,
-    skipped_trivial), both lists in block order."""
+    numba where they apply, the per-block path otherwise. Returns (lengths, coeffs, masks_data,
+    max_errors, skipped_trivial): the blocks as serialize_compressed_blocks gives them, in block
+    order, and the error of every block (an array from the array paths, a list otherwise)."""
     fast = _compress_blocks_arrays(
         padded_image, block_size, nodata_value, config, is_integer, src_dtype
     )
@@ -136,10 +172,14 @@ def _compress_padded_blocks(padded_image, block_size, nodata_value, config, is_i
     if fast is None:
         f32 = _compress_blocks_f32(padded_image, block_size, nodata_value, config, src_dtype)
         if f32 is not None:
-            fast, mixed_blocks = f32[:3], f32[3]
+            fast, mixed_blocks = f32[:4], f32[4]
     if fast is not None:  # whole arrays end to end (GPU session / numba), no per-block tuples
-        compressed_blocks, max_errors, skipped = fast
-        _run_block_batches(mixed_blocks, compressed_blocks, max_errors, num_processes, config)
+        lengths, coeffs, max_errors, skipped = fast
+        masks_data = []
+        if mixed_blocks:
+            mixed = {}
+            _run_block_batches(mixed_blocks, mixed, max_errors, num_processes, config)
+            lengths, coeffs, masks_data = _insert_blocks(lengths, coeffs, mixed)
     else:
         all_blocks = extract_blocks(padded_image, block_size, nodata_value)
         total_blocks = len(all_blocks)
@@ -151,7 +191,8 @@ def _compress_padded_blocks(padded_image, block_size, nodata_value, config, is_i
         skipped = total_blocks - len(blocks_to_process)
 
         _run_block_batches(blocks_to_process, compressed_blocks, max_errors, num_processes, config)
-    return compressed_blocks, max_errors, skipped
+        lengths, coeffs, masks_data = serialize_compressed_blocks(compressed_blocks)
+    return lengths, coeffs, masks_data, max_errors, skipped
 
 
 def compress_channel_dct_strips(
@@ -162,6 +203,7 @@ def compress_channel_dct_strips(
     config: Config,
     num_processes: int,
     src_dtype: Optional[str] = None,
+    errors_out: Optional[list] = None,
 ) -> _DctResult:
     """Compress a single channel strip by strip (about DCT_STRIP_PIXELS pixels each) with the same
     array paths as compress_channel_dct, so the whole band never sits in memory. Blocks are
@@ -188,26 +230,36 @@ def compress_channel_dct_strips(
     n = block_size
     padded_H, padded_W, padded_shape = _calc_padded_dims(H, W, n)
     strip_rows = max(1, DCT_STRIP_PIXELS // (padded_W * n))  # block rows per strip
-    compressed_blocks: list = []
-    max_errors: list = []
+    length_parts: list = []
+    coeff_parts: list = []
+    error_parts: list = []
+    masks_data: list = []
+    total_blocks = 0
     skipped_total = 0
     for y0 in range(0, padded_H, strip_rows * n):
         h = min(strip_rows * n, H - y0)
         image = src.read(band_idx, window=Window(0, y0, W, h)).astype(np.float32)
         padded_strip, _ = pad_image(image, n)
         del image
-        blocks, errors, skipped = _compress_padded_blocks(
+        lengths, coeffs, masks, errors, skipped = _compress_padded_blocks(
             padded_strip, n, nodata_value, config, is_integer, src_dtype, num_processes
         )
         del padded_strip
-        compressed_blocks.extend(blocks)
-        max_errors.extend(errors)
+        length_parts.append(lengths)
+        coeff_parts.append(coeffs)
+        error_parts.append(errors)
+        # mask entries carry the block index within the whole band
+        masks_data.extend([total_blocks + i, mask] for i, mask in masks)
+        total_blocks += len(lengths)
         skipped_total += skipped
     if not config.output.quiet:
-        print(f"  Strip mode: {len(compressed_blocks)} blocks (skipped {skipped_total} trivial)")
+        print(f"  Strip mode: {total_blocks} blocks (skipped {skipped_total} trivial)")
 
-    max_error_global = max(max_errors) if max_errors else 0.0
-    validity = all(e <= config.compression.accuracy for e in max_errors)
+    if all(isinstance(part, np.ndarray) for part in error_parts):
+        max_errors = np.concatenate(error_parts)
+    else:
+        max_errors = [e for part in error_parts for e in part]
+    max_error_global, validity = _error_summary(max_errors, config.compression.accuracy)
 
     if not validity and config.compression.auto_select_block_size and block_size > 8:
         smaller_n = {32: 16, 16: 8}[block_size]
@@ -218,10 +270,13 @@ def compress_channel_dct_strips(
         retry_cfg.compression.block_size = smaller_n
         retry_cfg.compression.auto_select_block_size = False
         return compress_channel_dct_strips(
-            src, band_idx, smaller_n, nodata_value, retry_cfg, num_processes, src_dtype
+            src, band_idx, smaller_n, nodata_value, retry_cfg, num_processes, src_dtype, errors_out
         )
+    if errors_out is not None:
+        errors_out[:] = [np.asarray(max_errors, dtype=np.float64)]
 
-    lengths, coeffs_np, masks_data = serialize_compressed_blocks(compressed_blocks)
+    lengths = np.concatenate(length_parts)
+    coeffs_np = np.concatenate(coeff_parts)
     return lengths, coeffs_np, masks_data, max_error_global, validity, block_size, padded_shape
 
 
@@ -233,6 +288,7 @@ def compress_channel_dct_streaming(
     config: Config,
     num_processes: int,
     src_dtype: Optional[str] = None,
+    errors_out: Optional[list] = None,
 ) -> _DctResult:
     """Compress a single channel via rasterio Window strips (low-memory mode).
 
@@ -316,7 +372,10 @@ def compress_channel_dct_streaming(
             src_dtype,
             in_memory=False,
             band_idx=band_idx,
+            errors_out=errors_out,
         )
+    if errors_out is not None:
+        errors_out[:] = [np.asarray(max_errors, dtype=np.float64)]
 
     lengths, coeffs_np, masks_data = serialize_compressed_blocks(compressed_blocks)
     return lengths, coeffs_np, masks_data, max_error_global, validity, block_size, padded_shape
@@ -601,7 +660,9 @@ def _compress_blocks_arrays(padded, n, nodata_value, config, is_integer, src_dty
     process_block_batch, then one channel search on the GPU session (or numba). With the predictor
     in mode 3 (uint8_use_L_prediction + accept) the predicted L drives accept_predicted on the CPU.
     Applies only when the batched path would apply (lockstep on, no heuristic backend, no NoData,
-    no zero masks, uint8, n in 8/16/32); returns (compressed_blocks, max_errors, trivial_count) or None."""
+    no zero masks, uint8, n in 8/16/32); returns (lengths, coeffs, max_errors, trivial_count) or None:
+    the length of every block (0 for an all-zero block, as serialize_compressed_blocks stores it),
+    the coefficients of all blocks one after another and the error of every block, as arrays."""
     from core.dct import dct2, _get_zigzag_indices
     from engine.blocks import _array_path_enabled, scaled_backscan, search_u8_arrays
     from engine.utils import integer_range
@@ -628,13 +689,11 @@ def _compress_blocks_arrays(padded, n, nodata_value, config, is_integer, src_dty
     blocks = padded.reshape(H // n, n, W // n, n).transpose(0, 2, 1, 3).reshape(-1, n, n)
     N = blocks.shape[0]
     allzero = (blocks == 0).all(axis=(1, 2))
-    compressed_blocks = [None] * N
-    max_errors = [0.0] * N
-    for i in np.flatnonzero(allzero):
-        compressed_blocks[int(i)] = 0  # ALL_ZEROS, as _collect_nontrivial
+    lengths = np.zeros(N, dtype=np.int64)  # 0: ALL_ZEROS, as _collect_nontrivial
+    max_errors = np.zeros(N)
     todo = np.flatnonzero(~allzero)
     if todo.size == 0:
-        return compressed_blocks, max_errors, int(allzero.sum())
+        return lengths, np.empty(0, dtype=np.int64), max_errors, int(allzero.sum())
     center = integer_range(src_dtype)[0]
     A = blocks[todo] - center  # float32 - python float stays float32, as the per-block path
     dct = np.round(dct2(A, config.compression.dct_type), config.compression.decimal_places)
@@ -653,10 +712,10 @@ def _compress_blocks_arrays(padded, n, nodata_value, config, is_integer, src_dty
         np.full(m, scaled_backscan(config.model.minimize_backscan, n), dtype=np.int64),
         LP=LP, scales=scales, brk=int(config.model.backscan_break_after),
     )
-    for j, i in enumerate(todo):
-        compressed_blocks[int(i)] = RES[j, : int(LF[j])].astype(int)
-        max_errors[int(i)] = float(ERR[j])
-    return compressed_blocks, max_errors, int(allzero.sum())
+    lengths[todo] = LF
+    max_errors[todo] = ERR
+    coeffs = RES[np.arange(n * n)[None, :] < LF[:, None]].astype(np.int64, copy=False)
+    return lengths, coeffs, max_errors, int(allzero.sum())
 
 
 def _f32_array_enabled(config) -> bool:
@@ -667,13 +726,17 @@ def _f32_array_enabled(config) -> bool:
 def _compress_blocks_f32(padded, n, nodata_value, config, src_dtype):
     """cm=3 (float32) on whole arrays. Clean blocks (finite, no zeros, no NoData inside) go through
     engine.f32_arrays.search_f32 with the same results as refine_dct_array; all-NoData blocks get the
-    NoData sentinel 1 and all-zero blocks the sentinel 0, as _collect_nontrivial. Blocks that mix zeros
-    or NoData with values are returned as (idx, block, nodata) tuples for the per-block path, which
-    writes their masks. Returns (compressed_blocks, max_errors, skipped, mixed_blocks) or None."""
+    length -1 and all-zero blocks the length 0, as serialize_compressed_blocks stores the sentinels of
+    _collect_nontrivial. Blocks that mix zeros or NoData with values are returned as (idx, block,
+    nodata) tuples for the per-block path, which writes their masks; here they hold length 0.
+    Returns (lengths, coeffs, max_errors, skipped, mixed_blocks) or None: the length and the error of
+    every block and the coefficients of all blocks one after another, as arrays."""
     from core.dct import dct2, _get_zigzag_indices
     from engine.f32_arrays import search_f32
 
-    if src_dtype != "float32" or n != 8 or not _f32_array_enabled(config):
+    # N = 32 stays on the per-block pool: its reconstructions (tensordot, single-threaded BLAS) make the
+    # array search slower than the 32 workers, 25 s against 7 s on a 4096 x 4096 crop
+    if src_dtype != "float32" or n > 16 or not _f32_array_enabled(config):
         return None
     H, W = padded.shape
     blocks = padded.reshape(H // n, n, W // n, n).transpose(0, 2, 1, 3).reshape(-1, n, n)
@@ -683,12 +746,10 @@ def _compress_blocks_f32(padded, n, nodata_value, config, src_dtype):
     allzero = (blocks == 0).all(axis=(1, 2)) & ~allnd
     zero_any = (blocks == 0).any(axis=(1, 2))
     clean = np.isfinite(blocks).all(axis=(1, 2)) & ~zero_any & ~nd_eq.any(axis=(1, 2))
-    compressed_blocks = [None] * N
-    max_errors = [0.0] * N
-    for i in np.flatnonzero(allnd):
-        compressed_blocks[int(i)] = 1  # ALL_NODATA
-    for i in np.flatnonzero(allzero):
-        compressed_blocks[int(i)] = 0  # ALL_ZEROS
+    lengths = np.zeros(N, dtype=np.int64)  # 0: ALL_ZEROS
+    lengths[allnd] = -1  # ALL_NODATA
+    coeffs = np.empty(0, dtype=np.int64)
+    max_errors = np.zeros(N)
     mixed = np.flatnonzero(~(allnd | allzero | clean))
     mixed_blocks = [(int(i), blocks[i], nodata_value) for i in mixed]
     todo = np.flatnonzero(clean)
@@ -698,16 +759,15 @@ def _compress_blocks_f32(padded, n, nodata_value, config, src_dtype):
         dct = np.round(dct2(A, config.compression.dct_type), config.compression.decimal_places)
         zz = np.ascontiguousarray(dct.reshape(todo.size, -1)[:, zz_idx], dtype=np.float32)
         acc = np.full(todo.size, float(config.compression.accuracy))
-        LF, ERR, RES = search_f32(
+        LF, ERR, coeffs = search_f32(
             zz, A, acc, config.scaling_factor, config.compression.dct_type,
             backscan=int(config.model.minimize_backscan),
             brk=int(config.model.backscan_break_after),
         )
-        for j, i in enumerate(todo):
-            compressed_blocks[int(i)] = RES[j, : int(LF[j])].astype(int)
-            max_errors[int(i)] = float(ERR[j])
+        lengths[todo] = LF
+        max_errors[todo] = ERR
     skipped = int(allnd.sum() + allzero.sum())
-    return compressed_blocks, max_errors, skipped, mixed_blocks
+    return lengths, coeffs, max_errors, skipped, mixed_blocks
 
 
 def _prefilter_trivial(_all_blocks, total_blocks):
@@ -765,7 +825,14 @@ def _run_block_batches(blocks_to_process, compressed_blocks, max_errors, num_pro
     if not blocks_to_process:
         return
 
-    blocks_per_batch = max(2048, len(blocks_to_process) // num_processes)
+    # The cost of a block grows with its pixels, so the smallest batch and the serial threshold
+    # hold the same number of pixels for every block size: 2048 and 4000 blocks of 8 x 8,
+    # 512 and 1000 of 16 x 16, 128 and 250 of 32 x 32. Only with forked workers, which share the IDCT
+    # basis built below; a spawned worker costs an import and builds its own basis, so there the
+    # counts stay those of 8 x 8.
+    forked = multiprocessing.get_start_method() == "fork"
+    pixel_scale = max(1, int(np.shape(blocks_to_process[0][1])[0]) ** 2 // 64) if forked else 1
+    blocks_per_batch = max(max(1, 2048 // pixel_scale), len(blocks_to_process) // num_processes)
     batches = [
         (i // blocks_per_batch, blocks_to_process[i : i + blocks_per_batch])
         for i in range(0, len(blocks_to_process), blocks_per_batch)
@@ -773,14 +840,17 @@ def _run_block_batches(blocks_to_process, compressed_blocks, max_errors, num_pro
 
     effective = min(num_processes, len(batches))
 
-    # For small files the Pool start-up + IPC pickle overhead exceeds compute gains; above a few
-    # thousand blocks the batches run in parallel. Batches are formed the same way for any process
-    # count, so the result does not depend on it.
-    _SERIAL_THRESHOLD = 4_000
+    # For small files the Pool start-up + IPC pickle overhead exceeds compute gains; above the
+    # threshold the batches run in parallel. Every block is searched on its own, so the result
+    # does not depend on the batch size or the process count.
+    _SERIAL_THRESHOLD = 4_000 // pixel_scale
     if len(blocks_to_process) < _SERIAL_THRESHOLD:
         effective = 1
 
     if effective > 1:
+        # Built here, the IDCT basis is inherited by the forked workers and they all read the same
+        # pages. A copy per worker (8 MB for 32 x 32) pushes the block search out of the CPU cache.
+        _get_idct_basis(int(np.shape(blocks_to_process[0][1])[0]), config.compression.dct_type)
         batch_func = partial(process_block_batch, config=config)
         with multiprocessing.Pool(processes=effective) as pool:
             if not config.output.quiet:
@@ -817,6 +887,7 @@ def _retry_with_smaller_n(
     src_dtype,
     in_memory,
     band_idx=None,
+    errors_out=None,
 ):
     smaller_n = {32: 16, 16: 8}[block_size]
     if not config.output.quiet:
@@ -829,7 +900,8 @@ def _retry_with_smaller_n(
 
     if in_memory:
         return compress_channel_dct(
-            image_or_src, smaller_n, nodata_value, retry_cfg, num_processes, src_dtype=src_dtype
+            image_or_src, smaller_n, nodata_value, retry_cfg, num_processes, src_dtype=src_dtype,
+            errors_out=errors_out,
         )
     return compress_channel_dct_streaming(
         image_or_src,
@@ -839,6 +911,7 @@ def _retry_with_smaller_n(
         retry_cfg,
         num_processes,
         src_dtype=src_dtype,
+        errors_out=errors_out,
     )
 
 
@@ -872,6 +945,131 @@ def _calc_padded_dims(H, W, n):
 def _calc_strip_rows(W, n):
     strip_rows = max(n, (64 * 1024 * 1024) // (W * 4))
     return ((strip_rows + n - 1) // n) * n
+
+
+def compress_channel_dct_adaptive(
+    src, band_idx, block_size, nodata_value, config, num_processes, src_dtype, use_streaming
+):
+    """cm=3 (float) with the scaling factor chosen from the accuracy (select_scaling_factor) and
+    per-block exceptions: every block whose error exceeds the accuracy with that factor is compressed
+    again with sf * 10, sf * 100, sf * 1000 until it holds it, and replaces its own entry in the
+    streams (lengths, coefficients, masks). Blocks that are all zero or all NoData are markers without
+    coefficients and never need it; blocks that mix NoData/zeros with data carry coefficients and
+    go through the same check.
+    Returns the 7-tuple of compress_channel_dct plus (sf, exceptions): exceptions is
+    [gaps, levels] - block index = running sum of the gaps, scaling factor of the block
+    sf * 10**level - or None when every block holds the accuracy with sf."""
+    H, W = src.height, src.width
+    image = None if use_streaming else src.read(band_idx).astype(np.float32)
+    if use_streaming:
+        sh, sw = min(2048, H), min(2048, W)
+        sample = src.read(band_idx, window=Window((W - sw) // 2, (H - sh) // 2, sw, sh)).astype(np.float32)
+    else:
+        sample = image
+    if config.compression.auto_select_block_size:
+        block_size = auto_select_block_size(sample, config, nodata_value, src_dtype)
+    sf = select_scaling_factor(sample, block_size, nodata_value, config)
+    del sample
+    cfg = scaled_config(config, sf)
+    cfg.compression.auto_select_block_size = False  # block failures are handled by the exceptions
+    cfg.compression.block_size = block_size
+
+    errors_out: list = []
+    if use_streaming:
+        result = compress_channel_dct_streaming(
+            src, band_idx, block_size, nodata_value, cfg, num_processes, src_dtype, errors_out=errors_out
+        )
+    else:
+        result = compress_channel_dct(
+            image, block_size, nodata_value, cfg, num_processes, src_dtype, errors_out=errors_out
+        )
+    lengths, coeffs, masks_data, _, _, n, padded_shape = result
+    errors = errors_out[0]
+    lengths = np.asarray(lengths, dtype=np.int64)
+    coeffs = np.asarray(coeffs, dtype=np.int64)
+    masks_data = list(masks_data)
+    acc = float(config.compression.accuracy)
+    padded_W = padded_shape[1]
+    bpr = padded_W // n
+    padded = None if image is None else pad_image(image, n)[0]
+    del image
+
+    def block_row(r):
+        if padded is not None:
+            return padded[r * n : (r + 1) * n]
+        h = min(n, H - r * n)
+        rows = src.read(band_idx, window=Window(0, r * n, W, h)).astype(np.float32)
+        return np.pad(rows, ((0, n - h), (0, padded_W - W)), mode="edge")
+
+    level = np.zeros(lengths.size, dtype=np.int64)
+    fail = np.flatnonzero(errors > acc)
+    blocks = _gather_blocks(block_row, fail, n, bpr)
+    for k in range(1, SF_EXCEPTION_LEVELS + 1):
+        if fail.size == 0:
+            break
+        # the failing blocks side by side form an image of one block row; blocks are independent
+        row = np.ascontiguousarray(blocks.transpose(1, 0, 2).reshape(n, fail.size * n))
+        err_k: list = []
+        new_l, new_c, new_m, *_ = compress_channel_dct(
+            row, n, nodata_value, scaled_config(cfg, sf * 10**k, quiet=True), num_processes,
+            src_dtype, errors_out=err_k,
+        )
+        lengths, coeffs, masks_data = _replace_blocks(
+            lengths, coeffs, masks_data, fail, new_l, new_c, new_m
+        )
+        errors[fail] = err_k[0]
+        level[fail] = k
+        keep = err_k[0] > acc
+        fail, blocks = fail[keep], blocks[keep]
+
+    max_error = float(errors.max()) if errors.size else 0.0
+    validity = bool((errors <= acc).all())
+    exc = np.flatnonzero(level)
+    if not config.output.quiet:
+        if exc.size:
+            per_level = ", ".join(f"x{10**k}: {int((level == k).sum())}" for k in range(1, SF_EXCEPTION_LEVELS + 1))
+            print(
+                f"  Adaptive sf={sf}: {exc.size}/{lengths.size} blocks ({100 * exc.size / lengths.size:.2f}%)"
+                f" with a finer step ({per_level}) -> archive format v4"
+            )
+        else:
+            print(f"  Adaptive sf={sf}: every block holds the accuracy, no per-block exceptions")
+        if not validity:
+            print(f"  ✗ {int((errors > acc).sum())} blocks miss the accuracy even with sf={sf * 10**SF_EXCEPTION_LEVELS}")
+    exceptions = [np.diff(exc, prepend=0).tolist(), level[exc].tolist()] if exc.size else None
+    return lengths, coeffs, masks_data, max_error, validity, n, padded_shape, sf, exceptions
+
+
+def _gather_blocks(block_row, idx, n, bpr):
+    """Blocks idx (sorted) of a padded band as an (len(idx), n, n) float32 array; block_row(r) gives
+    the padded block row r (n rows, bpr * n columns)."""
+    out = np.empty((idx.size, n, n), dtype=np.float32)
+    rows = idx // bpr
+    for r in np.unique(rows):
+        sel = np.flatnonzero(rows == r)
+        strip = block_row(int(r)).reshape(n, bpr, n)
+        out[sel] = strip[:, idx[sel] % bpr, :].transpose(1, 0, 2)
+    return out
+
+
+def _replace_blocks(lengths, coeffs, masks_data, idx, new_lengths, new_coeffs, new_masks):
+    """Streams of a channel with the blocks idx (sorted) replaced by their new compressed form:
+    new_lengths / new_coeffs / new_masks as compress_channel_dct gives them for these blocks in
+    the order of idx (mask entries carry the position within idx)."""
+    keep = np.ones(lengths.size, dtype=bool)
+    keep[idx] = False
+    kept = coeffs[np.repeat(keep, np.maximum(lengths, 0))]
+    lengths = lengths.copy()
+    lengths[idx] = np.asarray(new_lengths, dtype=np.int64)
+    from_new = np.repeat(~keep, np.maximum(lengths, 0))
+    merged = np.empty(from_new.size, dtype=np.int64)
+    merged[from_new] = np.asarray(new_coeffs, dtype=np.int64)
+    merged[~from_new] = kept
+    replaced = set(idx.tolist())
+    masks = [m for m in masks_data if int(m[0]) not in replaced]
+    masks += [[int(idx[int(j)]), mask] for j, mask in new_masks]
+    masks.sort(key=lambda m: int(m[0]))
+    return lengths, merged, masks
 
 
 def _calc_effective_processes(total_blocks, num_processes):
@@ -929,6 +1127,7 @@ def _run_strips_multiprocess(
     )
     pending = []
 
+    _get_idct_basis(n, config.compression.dct_type)  # shared by the forked workers, as in _run_block_batches
     with multiprocessing.Pool(processes=effective_processes) as pool:
         for y_start in range(0, padded_H, strip_rows):
             strip_data, _ = _read_and_pad_strip(src, band_idx, y_start, H, W, strip_rows, n, pad_W)

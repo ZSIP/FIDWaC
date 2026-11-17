@@ -5,6 +5,7 @@
 - [Compression Modes (cm)](#compression-modes-cm)
 - [Abstract](#abstract)
 - [Batched uint8 path (cm=5/cm=6), GPU and L prediction](#batched-uint8-path-cm5cm6-gpu-and-l-prediction)
+- [Float DCT path (cm=3): array search and adaptive scaling factor](#float-dct-path-cm3-array-search-and-adaptive-scaling-factor)
 - [System Requirements and Installation](#system-requirements-and-installation)
   - [System Requirements](#system-requirements)
   - [Full Installation Guide](#full-installation-guide)
@@ -44,7 +45,7 @@ FIDWAC v2 selects the compression mode automatically based on data type and flag
 | cm | Mode | Input data | Error guarantee | How to select |
 |----|------|------------|-----------------|---------------|
 | 1 | TurboJPEG (quality) | uint8, exactly 3 RGB bands | none (JPEG quality parameter) | 3-band uint8 with `--no-uint8-accuracy-mode` (the shipped `config.json` has `uint8_accuracy_mode: true`, so without this flag RGB goes to cm=6); other integer rasters with this flag are refused |
-| 3 | DCT + DC predictor | float32/float64 only (DEM/DTM) | max error ≤ ε in raster units | `--method dct` + `--accuracy` (default for float) |
+| 3 | DCT + DC predictor | float32/float64 only (DEM/DTM) | max error ≤ ε in raster units, checked for every block | `--method dct` + `--accuracy` (default for float); quantisation step chosen from ε with per-block exceptions (`adaptive_sf`, on by default) |
 | 4 | Lossless (data stored unchanged) | any type: 3-band uint8 RGB as PNG + world file, everything else as GeoTIFF | error = 0 (lossless) | `--lossless` (takes precedence over all other modes) |
 | 5 | DCT integer per band | all integer types: uint8 / int8 / uint16 / int16 | max error ≤ ε per band, ε = `--uint8-accuracy` (raster units) | accuracy mode (`uint8_accuracy_mode`, on in the shipped `config.json`) + `--uint8-accuracy` |
 | 6 | Per-block YCbCr | uint8, ≥3 RGB bands | max error ≤ ε in RGB space | accuracy mode + `--uint8-accuracy` + `--ycbcr-per-block` (RGB bands from `--rgb-channel-indices`, default `1,2,3`) |
@@ -148,9 +149,79 @@ The measurements ran on a server with 32 cores and 314 GB RAM. Limiting to 4 cor
 
 ### Limitations
 
-- The float32 path (cm=3) uses the array search on the CPU only (no GPU kernels). Float16 is unchanged.
+- The float32 path (cm=3) uses the array search on the CPU only (no GPU kernels, see the next section). Float16 is unchanged.
 - The forward DCT and the IDCT verification stay on the CPU (scipy), because only scipy gives the same rounding at ties.
 - The test scripts in `tests_batch/` contain paths of the development machine and need adjusting before use.
+
+## Float DCT path (cm=3): array search and adaptive scaling factor
+
+### Array search
+
+Float32 blocks with N = 8 or 16 are searched as whole arrays (`engine/f32_arrays.py`, `search_f32`), with the same results as the per-block reference `refine_dct_array`:
+
+- the binary search, the backscan, the float32 store check and the packing of the coefficients run in numba `prange` kernels (`_bsearch_kernel`, `_backscan_kernel`, `_store_err_kernel`, `_pack_prefixes`), without `fastmath`, so every pixel sees the same IEEE operations as the numpy reference;
+- the reconstructions stay on the libraries of the reference (BLAS `tensordot`, scipy IDCT), so the values do not depend on the machine;
+- the kernels use the numba threads and are called only from the main process: numba's OpenMP layer aborts a process created by `fork()` (a worker of the block pool) once its parent has used the threads (`core/dct.py`, `in_forked_process`; the uint8 kernels switch to serial variants in such a worker);
+- large scipy FFT calls use all cores (`fft_workers`); arrays under 2^19 elements and pool workers use one thread.
+
+Blocks that mix data with zeros, NoData, NaN or ±inf go through the per-block path, which writes their masks; N = 32 stays on the per-block pool (there the array reconstruction is slower than 32 workers).
+
+### Adaptive scaling factor
+
+The coefficients are stored as `round(c * sf)`. Earlier releases used `sf = 10**decimal_places` (100 by default) for every accuracy and, when a single block missed the accuracy, compressed the whole channel again with a 10 times finer step. Now (`compression.adaptive_sf`, default `true`):
+
+1. **Global step from the accuracy.** `select_scaling_factor` (`compress/compression_utils.py`) tries `sf = round(m / ε)` for `m` in 0.5, 0.75, 1, 1.5, 2, 3, 5, together with `10**decimal_places`, on up to `auto_select_sample_size` blocks without zeros, NoData or NaN. Each candidate is scored by the LZMA size of the stored streams, the blocks that miss the accuracy coded with the exception steps of point 2, and the smallest is taken. A large band is sampled in a central window of up to 2048 × 2048 pixels. Before quantisation the DCT is rounded to `log10(sf)` decimal places for a power of ten and one digit finer than the step otherwise.
+2. **Per-block exceptions.** After the channel is compressed with this `sf`, every block whose error exceeds ε is compressed again with `sf × 10`, then `sf × 100` and `sf × 1000`, until it holds the accuracy, and replaces its own entry in the streams. Every block with coefficients is checked, including the masked blocks; blocks that are all zero or all NoData are markers without coefficients and are never affected. A block that misses ε even at `sf × 1000` is reported and the archive is tagged `VF`.
+3. **Storage.** The channel keeps one `sf`; only the exceptions are listed, in the key `x = [gaps, levels]`: block index = running sum of the gaps, step of the block = `sf × 10**level` (level 1–3). The other blocks use the channel `sf` and carry no extra data. After LZMA, the list was 25–40% smaller than a step stored for every block (measured on random exception patterns of 0.25–5% of the blocks).
+4. **Format version.** An archive with at least one exception is written as format **v4**; without exceptions it stays **v3**. With `--auto` the retry with a smaller block size (section 9.3) is not used for float bands: the exceptions handle the blocks that miss the accuracy.
+
+Messages:
+
+```text
+  Adaptive sf: sample of 1000 blocks, bytes/block {50:107.0, 75:100.5, 100:88.6, ...} -> sf=100
+  Adaptive sf=100: 74/2500 blocks (2.96%) with a finer step (x10: 74, x100: 0, x1000: 0) -> archive format v4
+  Archive format v4 (marker 'x': 74 blocks with a finer scaling step): needs FIDWAC with format v4 support to decompress
+```
+
+and at decompression `Archive format v4: 74 blocks with a finer scaling step (marker 'x')`.
+
+`--no-adaptive-sf` (or `"adaptive_sf": false`) restores the previous behaviour (`sf = 10**decimal_places`, escalation of the whole channel). Integer bands (`cm=5`, `cm=6`) and the `pred` / `sz3` methods are not affected.
+
+**Compatibility.**
+
+- The current decoder reads every earlier archive (v1–v3) unchanged and v4 archives with exceptions. It rejects an archive of a newer format than it knows (`ARCHIVE_FORMAT_VERSION` in `compress/decompression.py`) with an error instead of decoding it.
+- Releases before this change do not check the format version and ignore `x`: they open a v4 archive without an error, but decode its exception blocks with the channel `sf`, i.e. about 10 times too large. Decompress v4 archives only with a FIDWAC that supports format v4. Archives without exceptions (v3) are readable by every release.
+
+### Measured results
+
+Machine: 32 cores, 314 GB RAM, NVIDIA RTX 2080 Ti, WSL2. "Before" = commit `6e0564f` (array search, `sf = 10**decimal_places`), "after" = commit `8c0b8a2` (adaptive `sf`). Every run was decompressed and checked pixel by pixel against the source (NoData excluded); in all runs every pixel is within ε, NoData and NaN are restored exactly, and the archives of the earlier version decode bit-identically with the new decoder.
+
+| Data | ε | Files | Archive after / before | Max error before / after |
+| --- | --- | --- | --- | --- |
+| DSM 400 × 400 (random) | 0.01 | 10 | 74.6% | 0.0100 / 0.0100 |
+| DSM 400 × 400 (random) | 0.05 | 10 | 78.9% | 0.0500 / 0.0500 |
+| DTM 200 × 200 (random) | 0.01 | 10 | 62.4% | 0.0100 / 0.0100 |
+| DTM 200 × 200 (random) | 0.05 | 10 | 73.1% | 0.0500 / 0.0500 |
+| 5-band float32, 8886 × 9738, NoData (1.73 GB) | 0.05 | 1 | 80.8% (386.6 → 312.3 MB) | 0.049999 / 0.049999 |
+
+At ε = 0.01 the gain comes from the exceptions alone: 1–3% of the blocks need a finer step, which before forced `sf = 1000` on the whole channel. In the 5-band file 162,327 blocks (0.4–11% per band) got an exception. Compression of that file took 970 s instead of 857 s (+13%: sampling of the candidates and recompression of the exception blocks); decompression 76 s in both versions.
+
+Speed of the array search against the earlier per-block path, on a 4096 × 4096 float32 crop (N = 8, ε = 0.05, median of 2 runs, wall time of the whole program call):
+
+| Variant | Compression | Decompression | Archive |
+| --- | --- | --- | --- |
+| per-block path (commit `ce2e917`), 32 processes | 26 s | 38 s | 21.72 MB |
+| array search, `--no-adaptive-sf`, 32 processes | 5.5 s | 4.5 s | 21.75 MB |
+| array search, `--no-adaptive-sf`, 1 process, 1 numba thread | 6.9 s | 4.5 s | 21.75 MB |
+| array search + adaptive `sf` (default), 32 processes | 6.6 s | 4.6 s | 17.54 MB |
+
+The current version is about 5 times faster in compression (array search) and 8 times faster in decompression (batched IDCT decoder) than the per-block version `ce2e917`. The number of processes does not matter for a single float file (the kernels run in threads); the numba threads give about 20%. The GPU does not take part in the float path; for uint8 (`--gpu on` against `--gpu off`, 32 processes) it shortened the compression of a 5120 × 5120 RGB PNG from 43.1 s to 29.6 s with a byte-identical archive, and made no difference on 800 × 800 tiles.
+
+### Limitations
+
+- The float search has no GPU kernels.
+- The adaptive step adds about 13–20% to the compression time of large files.
+- Results of section 13 were measured before this change (format v3, `sf = 10**decimal_places`); the Float32 archive sizes there are therefore larger than with the current default.
 
 ## System Requirements and Installation
 
@@ -341,6 +412,9 @@ python3 compress.py -i input.tif -o results/ --accuracy 0.05 --auto
 # Compress an elevation raster with explicit DCT parameters
 python3 compress.py -i input_dem.tif -o results/ --accuracy 0.10 --block-size 8 --backend binary
 
+# Elevation raster with the fixed step 10**decimal_places (format v3, readable by earlier releases)
+python3 compress.py -i input_dem.tif -o results/ --accuracy 0.05 --no-adaptive-sf
+
 # Compress a raster (every band separately) with the near-lossless predictive MED path (cm=7)
 python3 compress.py -i input_dem.tif -o results/input_pred.7z --accuracy 0.05 --method pred
 
@@ -448,6 +522,8 @@ The bundled geoid model `interpolation/geoid/PL_geod.7z` covers Poland (WGS 84 l
 - `--lossless`: lossless `cm=4` for any data type (PNG for 3-band uint8 RGB, GeoTIFF otherwise); takes precedence over all other modes. The data are stored unchanged, with little or no size reduction.
 - `--rgb-quality`: JPEG quality for the TurboJPEG RGB path (`cm=1`).
 - `--block-size` (`8`, `16`, `32`) or `--auto`: fixed DCT block size or automatic selection (section 9.3).
+- `--adaptive-sf` / `--no-adaptive-sf`: float bands (`cm=3`): quantisation step chosen from `--accuracy` with per-block exceptions (default on, archive format v4 when exceptions exist), or the fixed step `10**decimal_places` with escalation of the whole channel ([Float DCT path](#float-dct-path-cm3-array-search-and-adaptive-scaling-factor)).
+- `--decimal-places`: decimal places of the fixed step `10**decimal_places`; with `--adaptive-sf` it only adds `10**decimal_places` to the candidates.
 - `--rgb-channel-indices` and `--ycbcr-per-block`: RGB bands (1-based, default `1,2,3`) and the per-block YCbCr path (`cm=6`).
 - `--backend {binary,heuristic}`, `--advanced-heuristic`, `--accept-prediction`: L search and prediction (sections 6–7).
 - `--processes` / `-p`, `--gpu {auto,on,off}`: worker processes and the GPU path.
@@ -527,7 +603,8 @@ where:
 | **Coefficient representation** | ZigZag + int32 (signed 32-bit integers) | ZigZag + VLQ (variable-length integer encoding) |
 | **Archive compression** | py7zr (Python) | native 7zz (7-Zip-ZSTD, installed by the setup script), multithreaded; configurable LZMA2 block size (default 2m) |
 | **7z compression method** | default | PPMD / LZMA2 / BZIP2 / DEFLATE |
-| **Automatic DCT length search (`L`)** | binary search | hybrid: linear window + binary search |
+| **Automatic DCT length search (`L`)** | binary search | hybrid: linear window + binary search; whole-array search (numba kernels) for float32 and uint8 |
+| **Quantisation step (float)** | fixed `10**decimal_places` | chosen from the accuracy on a sample of blocks; blocks that need it get a 10/100/1000× finer step (per-block exceptions, format v4) |
 | **JIT acceleration** | none | Numba JIT for key operations |
 | **GUI** | simple Streamlit interface (`streamlit run app.py`) | Web GUI (Flask, in the browser; tabs Compression, Interpolation (IDW) and Tests) and desktop GUI (Tkinter, `app_tk.py`); both run `compress.py`, with recursion and directory-structure preservation |
 | **IDW interpolation** | `interpolation.py` (KD-tree, NumPy/numexpr or Dask engine) | `interpolate.py` + `interpolation/` package: one NumPy engine with KD-tree queries in blocks, cells with fewer than N points use the points that exist, north-up GeoTIFF, standard Surfer header, optional compression of the result (`--compress`) |
@@ -593,21 +670,24 @@ dec8 --> Out
 ```mermaid
 graph TB
     A["Read float32 GeoTIFF"] --> B["Detect special values: 0, NoData, NaN"]
-    B --> C["Split into NxN blocks"]
-    C --> D["Distribute blocks across CPU cores"]
-    D --> E{"Block classification"}
+    B --> S["Choose sf from the accuracy on a block sample (adaptive_sf)"]
+    S --> C["Split into NxN blocks"]
+    C --> E{"Block classification"}
     E -->|All zero, L=0| F1["Store L=0, no coefficients"]
     E -->|All NoData, L=-1| F2["Store L=-1, no coefficients"]
-    E -->|Mixed, L=-2| F3["RLE mask + DCT for valid data"]
-    E -->|Data, L>0| F4["2D-DCT + ZigZag + binary search -> L"]
-    F4 --> G["Scale to int64 by scaling_factor"]
-    G --> I["DC Median Predictor: dc_delta = dc - median(left, top, top_left)"]
+    E -->|Mixed, L=-2| F3["RLE mask + DCT for valid data (per-block path)"]
+    E -->|Data, L>0| F4["2D-DCT + ZigZag + array search -> L (numba threads)"]
+    F4 --> G["Scale to int64 by sf"]
+    F3 --> X{"Error <= accuracy?"}
+    G --> X
+    X -->|no| XE["Recompress the block with sf x 10 / x 100 / x 1000, record it in x"]
+    X -->|yes| I["DC Median Predictor: dc_delta = dc - median(left, top, top_left)"]
+    XE --> I
     I --> J["Separate streams: dc_bytes and ac_bytes, ZigZag + VLQ"]
     F1 --> L["Merge results"]
     F2 --> L
-    F3 --> L
     J --> L
-    L --> M["msgpack.packb: v=3, cm=3, c=dc_bytes+ac_bytes"]
+    L --> M["msgpack.packb: v=3 (v=4 with exceptions x), cm=3, sf, c=dc_bytes+ac_bytes"]
     M --> N[".7z archive: PPMD / LZMA2"]
 ```
 
@@ -682,7 +762,9 @@ The values are not changed, so the archive is only as small as PNG or DEFLATE ma
 ```mermaid
 graph TB
     A["Read .7z archive"] --> B["msgpack.unpackb"]
-    B --> C{"cm field?"}
+    B --> V{"Format version v <= 4?"}
+    V -->|no| VE["Error: archive newer than this FIDWAC"]
+    V -->|yes| C{"cm field?"}
     C -->|cm=3| D["c = dc_bytes, ac_bytes"]
     D --> E["decode_vlq dc_bytes -> dc_deltas"]
     D --> F["decode_vlq ac_bytes -> ac_values"]
@@ -701,7 +783,7 @@ graph TB
     K -->|L=0| L1["Fill with zeros"]
     K -->|L=-1| L2["Fill with NoData"]
     K -->|L=-2| L3["Reconstruct from RLE mask"]
-    K -->|L>0| L4["from_zigzag + IDCT + centering +128"]
+    K -->|L>0| L4["from_zigzag + batched IDCT (coefficients / sf of the block: channel sf, or sf x 10^level from x) + centering for cm=5"]
     L1 --> M["Assemble image"]
     L2 --> M
     L3 --> M
@@ -780,6 +862,18 @@ Version 2 compiles key incremental reconstruction, binary search, backscan, and 
 | `_med_decode(res)` | sequential MED (LOCO-I) index reconstruction for `cm=7` decompression |
 
 This removes Python overhead from the inner incremental-reconstruction and MED decoding loops. JIT compilation is cached for subsequent runs.
+
+The whole-array searches add parallel (`prange`) kernels:
+
+| Function | Description |
+| -------- | ----------- |
+| `_bsearch_kernel` (`engine/f32_arrays.py`) | float32 binary search for `L` of many blocks at once (N = 8, 16) |
+| `_backscan_kernel` | float32 backscan with the incremental difference, one block per thread |
+| `_store_err_kernel` | error of the float32 stored value, including rounding midpoints |
+| `_scatter_prefix`, `_pack_prefixes` | zigzag scatter of the kept coefficients and packing of the stored stream |
+| `search_rows` (`engine/u8_lockstep.py`) | three-phase uint8 search (CPU kernels or GPU session) |
+
+They run in the threads of the main process (no `fastmath`, so the results equal the per-block reference). Small batches stay on the calling thread; in a forked pool worker the uint8 search uses serial variants, and the float kernels are not called there.
 
 The parallel kernels (`prange`) use numba's default OpenMP threading layer. With `--backend heuristic` the program switches to numba's `workqueue` layer before the first parallel launch, because the GNU OpenMP layer aborts the forked pool workers of the advanced heuristic and the run would hang.
 
@@ -1061,13 +1155,15 @@ This mechanism is lossless with respect to the stored DCT coefficients. It does 
 
 `cm=3` is used for elevation and numerical data such as DTM/DSM (FLOAT). The program:
 
-1. splits the raster into blocks,
-2. applies DCT,
-3. finds the smallest `L` satisfying the requested error,
-4. stores block lengths in `l`,
-5. stores coefficients as `c = [dc_bytes, ac_bytes]`.
+1. chooses the quantisation step `sf` from the accuracy (`adaptive_sf`, default) or uses `10**decimal_places`,
+2. splits the raster into blocks,
+3. applies DCT,
+4. finds the smallest `L` satisfying the requested error,
+5. compresses the blocks that miss the accuracy again with `sf × 10`, `× 100` or `× 1000` and lists them in `x` (adaptive `sf` only),
+6. stores block lengths in `l`,
+7. stores coefficients as `c = [dc_bytes, ac_bytes]`.
 
-Accuracy is measured in the units of the input data, for example metres or centimetres. Georeferencing, NoData, raster dimensions, and the GeoTIFF transform are stored in archive metadata.
+Accuracy is measured in the units of the input data, for example metres or centimetres, and is checked for every block. Georeferencing, NoData, raster dimensions, and the GeoTIFF transform are stored in archive metadata.
 
 ### 8.3 Single-channel uint8 Mode (`cm=5`)
 
@@ -1129,11 +1225,12 @@ Archives written by earlier versions of `cm=4` (one msgpack with a PNG Sub filte
 
 | Field | Meaning |
 | ----- | ------- |
-| `cm` | coding mode: `3`, `4`, `5`, or `6` |
+| `cm` | coding mode of the DCT archive: `0` (legacy), `3`, `4` (archives before the PNG / GeoTIFF lossless mode), `5`, or `6` |
 | `l` | block lengths `L`; for `cm=6`, separate for Y, Cb, and Cr |
 | `c` | coefficient data or lossless data |
 | `m` | RLE masks for NoData, zeros, NaN (type 3) and +/-inf (types 4, 5) |
-| `sf` | channel scaling factor, if stored |
+| `sf` | channel scaling factor, if stored (with `adaptive_sf` always stored for float channels; any positive integer, not only a power of ten) |
+| `x` | format v4, `cm=3`: per-block exceptions `[gaps, levels]`; block index = running sum of the gaps, scaling factor of the block = `sf × 10**level` |
 | `bs` | stored block size `N` for the channel; if missing, global `n` is used |
 
 The main implementation files are `core/codec.py`, `compress/compression.py`, and `compress/decompression.py`.
@@ -1216,11 +1313,11 @@ The program first computes channel variability, then selects candidate block siz
 - `auto_select_std_threshold_medium < sigma <= auto_select_std_threshold_high` (default `5.0-10.0`) -> `N=8` and `N=16` are tested,
 - `sigma <= auto_select_std_threshold_medium` -> `N=8`, `N=16`, and `N=32` are tested.
 
-This list is further restricted by `allowed_block_sizes` from `config.json`. For each allowed `N`, the program samples blocks (`auto_select_sample_size`, default `1000`), performs trial compression, and estimates msgpack size. The `N` with the smallest estimated size is selected.
+This list is further restricted by `allowed_block_sizes` from `config.json`. For each allowed `N`, the program samples blocks (`auto_select_sample_size`, default `1000`), performs trial compression, and estimates msgpack size. The `N` with the smallest estimated size is selected. With `adaptive_sf` the quantisation step is chosen next, for the selected `N` ([Float DCT path](#float-dct-path-cm3-array-search-and-adaptive-scaling-factor)).
 
 **Integer / uint8 data (`cm=5`):**
 
-For uint8 data, the code selects not only block size `N`, but also the scaling factor `sf`. It first tries to use the fast table `models/lookup_uint8_grid.npz`, which predicts `(sf, N)` from sample DCT features. If the table is unavailable, the program switches to sampling.
+For uint8 data, the code selects not only block size `N`, but also the scaling factor `sf`. It first tries to use the fast table `models/lookup_uint8_grid.npz`, which predicts `(sf, N)` from sample DCT features. If the table is unavailable, or predicts an `N` outside `allowed_block_sizes`, the program switches to sampling.
 
 Sampling and preliminary candidate selection are controlled by three parameters in `config.json` or the web GUI:
 
@@ -1232,7 +1329,7 @@ In sampling mode, the program tests combinations of `sf` from `uint8_scaling_fac
 
 **Retry after validity failure:**
 
-If full-channel compression returns `validity=False` and `N > 8`, the program retries with a smaller block size: `32 -> 16 -> 8`. During retry, `auto_select_block_size` is disabled so that the smaller block size is forced. The output filename receives `_VT` (valid) or `_VF` (invalid).
+If full-channel compression returns `validity=False` and `N > 8`, the program retries with a smaller block size: `32 -> 16 -> 8`. During retry, `auto_select_block_size` is disabled so that the smaller block size is forced. Float bands with `adaptive_sf` do not use this retry: the blocks that miss the accuracy get a finer step instead. The output filename receives `_VT` (valid) or `_VF` (invalid).
 
 ---
 
@@ -1265,16 +1362,17 @@ output.7z
 └── {name}.msgpack
 ```
 
-The `.msgpack` file contains both compression data and spatial metadata. For a single channel, fields `l`, `c`, `m`, and `cm` are stored directly in the dictionary. For multi-channel rasters, the `channels` field is used, and each channel has its own compression data such as `cm`, `l`, `c`, `m`, `sf`, and `bs`.
+The `.msgpack` file contains both compression data and spatial metadata. For a single channel, fields `l`, `c`, `m`, `cm`, `sf` and `x` are stored directly in the dictionary. For multi-channel rasters, the `channels` field is used, and each channel has its own compression data such as `cm`, `l`, `c`, `m`, `sf`, `x`, and `bs`.
 
 Main fields:
 
 | Field | Meaning |
 | ----- | ------- |
-| `v` | format version |
+| `v` | format version: `3`, or `4` when a channel holds per-block scaling exceptions (`x`); the decoder rejects versions newer than it supports |
 | `cm` | channel compression mode |
 | `ch` | number of data channels |
 | `n` | global block size `N` |
+| `f` | global scaling factor (`10**decimal_places`); a channel `sf` takes precedence |
 | `channels` | list of channels in a multi-channel raster |
 | `s`, `p` | original raster size and padded size |
 | `t`, `r` | GeoTIFF transform and CRS |
@@ -1304,6 +1402,8 @@ Example scheme for the DCT path:
 ```
 
 The accuracy tag shows the bound the bands are checked against: `U8acc{uint8_accuracy}_sf{...}` for integer bands (`cm=5`, `cm=6`; uint8, int8, uint16, int16), `Acc{accuracy}` for float bands (`cm=3`), and both for a raster that mixes float and integer bands.
+
+`dec{decimal}` is the configured `decimal_places`. With `adaptive_sf` the float bands may use another step; the step actually used (`sf`, and `x` for the exception blocks) is stored in the archive.
 
 For the lossless mode the name is `{name}_Lossless_CRS{crs}_{LF|VF}.7z`.
 
@@ -1343,8 +1443,8 @@ FIDWAC_v2/
 │   ├── output_crs.py       # output CRS policy: input CRS, config CRS or none
 │   ├── special_values.py   # NaN / +-inf codes for cm=7 and cm=8
 │   ├── float_storage.py    # float32 storage margin of the error bound (cm=7, cm=8)
-│   ├── compression_utils.py
-│   └── decompression.py    # Unified decompression (.7z, .msgpack, .fpred, .sz3, batched cm=6 IDCT)
+│   ├── compression_utils.py # Padding, block-size and float sf selection, serialisation, 7z packing
+│   └── decompression.py    # Unified decompression (.7z, .msgpack, .fpred, .sz3, batched IDCT, per-block sf of format v4)
 ├── core/                   # Core coding and transform algorithms
 │   ├── codec.py            # VLQ, ZigZag, DC Median Predictor, Numba JIT
 │   └── dct.py              # Precomputed IDCT bases and math operations
@@ -1354,7 +1454,8 @@ FIDWAC_v2/
 │   └── predictor_uint8.py  # uint8 L predictor and YCbCr channel grids
 ├── engine/                 # Block processing engine
 │   ├── blocks.py           # Raster blocking, multiprocessing, YCbCr decorrelation
-│   ├── refine.py           # Hybrid L search
+│   ├── refine.py           # Hybrid L search (per-block reference)
+│   ├── f32_arrays.py       # Whole-array float32 L search (numba prange kernels)
 │   ├── u8_lockstep.py      # Batched three-phase uint8 search (CPU / GPU)
 │   ├── gpu_u8/             # CUDA kernels and build.sh for the GPU path
 │   └── utils.py            # Interpolation, RLE masks, helpers
@@ -1401,14 +1502,18 @@ FIDWAC_v2/
 | `method` | `"dct"` | compression method family: `"dct"` (default), `"pred"` (`cm=7`), or `"sz3"` (`cm=8`) |
 | `accuracy` | `0.05` | maximum error for float data such as DTM/DSM (also float bands in `pred` / `sz3`); integer bands in accuracy mode use `uint8_accuracy` |
 | `block_size` | `8` | base block size `N`; may be changed by auto-selection |
-| `decimal_places` | `2` | number of decimal places used when quantizing DCT coefficients |
+| `decimal_places` | `2` | fixed quantisation step `sf = 10**decimal_places` for float bands without `adaptive_sf`; with it, one of the tested steps |
+| `adaptive_sf` | `true` | float bands (`cm=3`): step chosen from `accuracy` with per-block exceptions (archive format v4 when exceptions exist); `false` = fixed `10**decimal_places` |
+| `dct_type` | `2` | DCT type (scipy `dct` / `idct`) |
 | `crs` | `""` | output CRS: empty = CRS of the input file (no CRS if the input has none); `none` = write without a CRS; an EPSG code such as `epsg:2180` replaces the input CRS |
 | `auto_select_block_size` | `true` | enables automatic `N` selection and, for uint8, `sf` selection |
-| `auto_select_sample_size` | `1000` | number of blocks used for trial evaluation |
+| `auto_select_sample_size` | `1000` | number of blocks used for trial evaluation (block size and float `sf`) |
+| `auto_select_std_threshold_high`, `auto_select_std_threshold_medium` | `10.0`, `5.0` | variability thresholds of the block-size candidates (section 9.3) |
 | `allowed_block_sizes` | `[8, 16, 32]` | allowed `N` values for auto-selection |
 | `uint8_accuracy_mode` | `true` | enables accuracy mode for 8-bit data |
 | `uint8_accuracy` | `10` | maximum error for integer bands in accuracy mode (`cm=5`, `cm=6`, integer bands in `pred` / `sz3`) |
 | `uint8_scaling_factor` | `[1, 10]` | candidate `sf` values tested for uint8 data |
+| `uint8_zero_mask` | `false` | store a zero mask for uint8 blocks that mix zeros with data (exact zeros, larger archive; uses the per-block path) |
 | `ycbcr_per_block_mode` | `true` | enables per-block RGB YCbCr path (`cm=6`) |
 | `ycbcr_decode_verify` | `true` | verifies final `cm=6` candidate with exact decoder IDCT + RGB reconstruction |
 | `ycbcr_fallback_multipliers` | `1.0 -> 0.1` | accuracy-multiplier cascade for RGB YCbCr blocks |
@@ -1419,12 +1524,14 @@ FIDWAC_v2/
 
 | Parameter | Meaning |
 | --------- | ------- |
-| `num_processes` | `"auto"` uses the CPU core count, capped with an active GPU so that the CUDA contexts and the file batch fit in 75% of the free VRAM; a fixed number can also be provided |
-| `gpu` | `auto` (GPU when available, otherwise CPU with a note), `on` (GPU required), `off` (CPU only); CLI `--gpu` |
-| `fast_eval_basis` | uses a fast IDCT basis when evaluating error |
-| `verify_with_full_idct` | final verification by full IDCT reconstruction |
-| `l2_precheck_enabled` | quick precheck that rejects obviously too-short `L` values |
-| `incremental_backscan` | accelerates reducing `L` after a valid length is found |
+| `parallel.num_processes` | `"auto"` uses the CPU core count, capped with an active GPU so that the CUDA contexts and the file batch fit in 75% of the free VRAM; a fixed number can also be provided. For one float file the array search runs in threads, so this value hardly changes its time |
+| `gpu` | `auto` (GPU when available, otherwise CPU with a note), `on` (GPU required), `off` (CPU only); CLI `--gpu`. Used by the uint8 search only |
+| `optimizations.fast_eval_basis` | uses a fast IDCT basis when evaluating error |
+| `optimizations.verify_with_full_idct` | final verification by full IDCT reconstruction |
+| `optimizations.l2_precheck_enabled` | quick precheck that rejects obviously too-short `L` values |
+| `optimizations.incremental_backscan` | accelerates reducing `L` after a valid length is found |
+
+The whole-array searches (float32 and uint8) require `fast_eval_basis`, `verify_with_full_idct` and `incremental_backscan`; with any of them `false` the program uses the per-block path, which is several times slower.
 
 #### `model`
 
@@ -1508,7 +1615,7 @@ FIDWAC v2 introduces the following improvements over FIDWaC v1:
 | 1 | **DCT-II + ZigZag scanning** | Cosine transform and zigzag scanning. | Keeps the DCT-II + ZigZag approach, following JPEG-like coefficient ordering. |
 | 2 | **`L` search** | Classic binary search starting from `agt = len // 2`. | Hybrid search: linear window + binary search + minimization backscan. |
 | 3 | **RLE masks for NoData/zeros** | Special-value coding and nearest-neighbour interpolation. | Keeps this logic and integrates it with the new format and DCT paths. |
-| 4 | **Multiprocessing** | Parallel block processing with `multiprocessing.Pool`. | Parallel block processing with batching and lower orchestration overhead. |
+| 4 | **Multiprocessing** | Parallel block processing with `multiprocessing.Pool`. | Whole-array search in numba threads for float32 and uint8 (GPU session for uint8); the process pool remains for the per-block path (masked blocks, heuristic backends, float N = 32). |
 | 5 | **Serialization** | JSON / text-based data storage. | `msgpack`, a binary serialization format better suited for archive compression. |
 | 6 | **RGB paths** | No dedicated RGB compression. | Two paths: per-block YCbCr (`cm=6`, accuracy-based, error <= epsilon) and TurboJPEG SIMD (`cm=1`, quality-based, no error guarantee). |
 | 7 | **Coefficient encoding** | ZigZag coefficients stored as `int32` after `scaling_factor`. | ZigZag + VLQ (Variable-Length Quantity), variable-length encoding after ZigZag mapping. |
@@ -1524,7 +1631,7 @@ FIDWAC v2 introduces the following improvements over FIDWaC v1:
 | 17 | **DCT feature analysis** | No feature-grid predictor. | Predictor computes 4 features (`ac_abs_mean`, `zero_ratio`, `ac_std`, `std_dev`), while fast lookup uses (`ac_abs_mean`, `zero_ratio`). |
 | 18 | **Lookup grids** | No precomputed prediction tables. | Precomputed lookup grids with interpolation/fallback for empty cells. |
 | 19 | **Fast L2 verification** | More complete candidate evaluation. | L2 precheck rejects unsuitable lengths before full error evaluation. |
-| 20 | **Format versioning** | Limited format compatibility control. | Version number in the header and backward-compatibility mechanisms. |
+| 20 | **Format versioning** | Limited format compatibility control. | Version number in the header (`v=3`; `v=4` for per-block scaling exceptions); the decoder reads all earlier versions and rejects newer ones. |
 | 21 | **Recursive directories** | No full input directory hierarchy restoration. | GUI and CLI scan directories recursively and restore hierarchy in the output directory. |
 | 22 | **YCbCr decorrelation** | No RGB -> YCbCr transform. | RGB -> YCbCr before DCT for uint8 accuracy, reducing file size at the same RGB error guarantee. |
 | 23 | **uint8 accuracy mode (`cm=5`)** | No dedicated accuracy path for single 8-bit channels. | Maximum error guarantee for values 0-255, centering -128, and adaptive `scaling_factor`. |
@@ -1534,6 +1641,7 @@ FIDWAC v2 introduces the following improvements over FIDWaC v1:
 | 27 | **Batched `cm=6` plane decoding** | Block-by-block IDCT loop during decompression. | `_reconstruct_plane_batched` evaluates `scipy.fft.idct` on block chunks. |
 | 28 | **Explicit predictive (`cm=7`) & SZ3 (`cm=8`) modes** | DCT-only pipeline. | Optional `--method pred` (`.fpred` MED + scalar quantization) and `--method sz3` (`.sz3` external SZ3) with full `.7z` and GeoTIFF metadata integration. |
 | 29 | **IDW interpolation** | `interpolation.py` with NumPy/numexpr or Dask engine; cells with fewer than N points could get values close to zero (Dask). | `interpolate.py` / `interpolation/`: one KD-tree engine with block queries, the points that exist are used, north-up GeoTIFF, geoid limit as a setting, optional compression of the grid with the VT/VF check, web GUI tab. |
+| 30 | **Quantisation step for float data** | Fixed `10**decimal_places`. | Step chosen from the accuracy on a block sample; only the blocks that need it get a 10/100/1000× finer step, listed in `x` (format v4). Every block holds the accuracy; Float32 archives 21–38% smaller on DSM/DTM tiles. |
 ---
 
 ## 13. Performance Test Results - FIDWAC v2 vs SZ3
@@ -1541,6 +1649,8 @@ FIDWAC v2 introduces the following improvements over FIDWaC v1:
 Tests were performed on real geospatial data: digital surface and terrain models (DSM, DTM; Float32), six-band multiband imagery (UInt8) and RGB orthophotos (UInt8). The reference compressor was **SZ3** 3.3.2 (command-line tool, default algorithm settings, absolute error bound `-M ABS -A ε`; each band compressed as a separate 2D array, Float32 directly with `-f`, UInt8 as 32-bit integers with `-I 32`). The tests used the latest, continuously developed version of FIDWaC v2, so the values may differ from those of earlier releases.
 
 > **Test environment:** AMD Ryzen 9 5950X, 128 GB RAM, NVIDIA RTX 5090, Ubuntu 22.04 under WSL2
+
+> **Version note:** these results were measured before the adaptive scaling factor for float data (archive format v3, `sf = 10**decimal_places`). With the current default (`adaptive_sf: true`) Float32 archives of DSM/DTM tiles are 21–38% smaller at the same error bound (10-file samples, [Measured results](#measured-results)); the Float32 compression ratios below are therefore lower than those of the current version. UInt8 and RGB archives had identical sizes before and after the change on the 10-file samples.
 
 **How the numbers are computed:**
 
@@ -1703,7 +1813,7 @@ FIDWAC v2 was used to compress data sets in a project carried out under the **IN
 | RGB orthophotos (ε = 20 DN) | either | comparable CR (−2%); FIDWAC v2 keeps the lower colour error |
 | Multiband UInt8 (ε = 2 DN) | **FIDWAC v2** | +10% CR and a lower error |
 | Multiband UInt8 (ε ≥ 5 DN) | **SZ3** for size, **FIDWAC v2** for accuracy | SZ3 archives are 14–43% smaller; FIDWAC v2 errors are lower |
-| Float32 DTM / DSM | **SZ3** for size, **FIDWAC v2** for accuracy | SZ3 CR is 1.5–2.7 times higher; FIDWAC v2 has a lower RMSE and volume error |
+| Float32 DTM / DSM | **SZ3** for size, **FIDWAC v2** for accuracy | SZ3 CR is 1.5–2.7 times higher (measured with format v3; the adaptive scaling factor reduces FIDWAC v2 archives by 21–38%); FIDWAC v2 has a lower RMSE and volume error |
 | **Data requiring a max-error guarantee and GIS metadata** | **FIDWAC v2** | stores georeferencing, NoData and parameters in one archive and controls the per-pixel error |
 
 ---
@@ -1755,7 +1865,7 @@ The tests revealed that at 2 DN about 30% of the RGB runs and 1.3% of the multib
 
 ### 14.5 Small-file fragmentation
 
-The tiles are small (DSM 400 × 400 px), so we checked whether splitting a raster into files limits compression. The same DSM pixels (a 1,600 × 1,600 px mosaic of 25 tiles) were compressed as one raster and as 25 independent 400 × 400 px windows without overlap; only the block borders differ. All results are VT.
+The tiles are small (DSM 400 × 400 px), so we checked whether splitting a raster into files limits compression. The same DSM pixels (a 1,600 × 1,600 px mosaic of 25 tiles) were compressed as one raster and as 25 independent 400 × 400 px windows without overlap; only the block borders differ. All results are VT. FIDWAC v2 was run with format v3 (`sf = 10**decimal_places`), before the adaptive scaling factor.
 
 | ε [m] | FIDWAC v2, whole raster [B] | FIDWAC v2, windows [B] | Windows / whole | SZ3, whole raster [B] | SZ3, windows [B] | Windows / whole |
 | :---: | ---: | ---: | :---: | ---: | ---: | :---: |

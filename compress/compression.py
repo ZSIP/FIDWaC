@@ -52,6 +52,7 @@ from .compression_lossless import compress_lossless
 from . import compression_dct
 from .compression_dct import (
     compress_channel_dct,
+    compress_channel_dct_adaptive,
     compress_channel_dct_streaming,
     compress_channel_dct_strips,
 )
@@ -553,6 +554,15 @@ def _compress_one_channel(
         if ch_sf is not None:
             ch_data["sf"] = ch_sf
 
+    elif config.compression.adaptive_sf and str(ch_dtype).startswith("float"):
+        (lengths, coeffs_np, masks_data, max_err, validity, block_size, padded_shape, ch_sf,
+         exceptions) = compress_channel_dct_adaptive(
+            src, band_idx, block_size, nodata_value, config, num_processes, ch_dtype, use_streaming
+        )
+        ch_data = {"l": lengths, "cm": 3, "m": masks_data, "bs": block_size, "sf": ch_sf}
+        if exceptions is not None:
+            ch_data["x"] = exceptions
+
     elif use_streaming:
         base_dec = config.compression.decimal_places
         dec = base_dec
@@ -801,8 +811,11 @@ def _finalize_dct_archive(
 
     block_size = channel_block_sizes[0] if channel_block_sizes else config.compression.block_size
 
+    # v4: some channel holds per-block scaling exceptions ("x"); without them the archive stays v3,
+    # readable by every earlier version (a channel "sf" that is not a power of ten is v3 too)
+    n_exceptions = sum(len(ch["x"][0]) for ch in ch_data_list if isinstance(ch, dict) and "x" in ch)
     dcv_compress = {
-        "v": 3,
+        "v": 4 if n_exceptions else 3,
         "ch": num_channels,
         "n": block_size,
         "s": [H, W],
@@ -834,6 +847,11 @@ def _finalize_dct_archive(
 
     if not config.output.quiet:
         print(f"  Saving: {output_path}")
+        if n_exceptions:
+            print(
+                f"  Archive format v4 (marker 'x': {n_exceptions} blocks with a finer scaling step):"
+                " needs FIDWAC with format v4 support to decompress"
+            )
 
     packed_data = msgpack.packb(dcv_compress, use_bin_type=True)
     del dcv_compress
@@ -890,6 +908,8 @@ def _assemble_channels(dcv_compress, ch_data_list, num_channels):
             dcv_compress["cm"] = ch_packed["cm"]
         if "sf" in ch_packed:
             dcv_compress["sf"] = ch_packed["sf"]
+        if "x" in ch_packed:
+            dcv_compress["x"] = ch_packed["x"]
         if "dt" in ch_packed:
             dcv_compress["dt"] = ch_packed["dt"]
     else:

@@ -57,6 +57,71 @@ echo ""
 # Check if virtual environment exists
 # Store venv in user's home directory (.fidwac), not in project directory
 VENV_DIR="$HOME/.fidwac/venv"
+
+# A venv is usable only if its activate script exists, pip runs inside it,
+# and it was built with a Python new enough for the pinned requirements.
+PY_MIN_MAJOR=3
+PY_MIN_MINOR=12
+
+venv_is_healthy() {
+    [ -f "$VENV_DIR/bin/activate" ] && "$VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1 \
+        && "$VENV_DIR/bin/python" -c "import sys; sys.exit(0 if sys.version_info >= ($PY_MIN_MAJOR, $PY_MIN_MINOR) else 1)" 2>/dev/null
+}
+
+# Pick the first interpreter that satisfies PY_MIN_MAJOR.PY_MIN_MINOR (newest first).
+find_python() {
+    local cand
+    for cand in python3.14 python3.13 python3.12 python3; do
+        if command -v "$cand" >/dev/null 2>&1 && "$cand" -c "import sys; sys.exit(0 if sys.version_info >= ($PY_MIN_MAJOR, $PY_MIN_MINOR) else 1)" 2>/dev/null; then
+            echo "$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Build the venv from scratch. Debian/Ubuntu ship python3 without ensurepip
+# unless python3-venv is installed, so install it and retry once.
+create_venv() {
+    local py
+    rm -rf "$VENV_DIR"
+    mkdir -p "$(dirname "$VENV_DIR")"
+
+    if ! py="$(find_python)" && command -v apt-get &> /dev/null; then
+        echo "[WARNING] Python ${PY_MIN_MAJOR}.${PY_MIN_MINOR}+ not found; trying to install python3.12 via apt..."
+        sudo apt-get update -qq
+        sudo apt-get install -y python3.12 python3.12-venv >/dev/null 2>&1 || true
+        py="$(find_python)" || py=""
+    fi
+    if [ -z "$py" ]; then
+        echo "[ERROR] Python ${PY_MIN_MAJOR}.${PY_MIN_MINOR}+ is required (numpy 2.5 needs it)."
+        echo "Install it (e.g. sudo apt install python3.12 python3.12-venv) and rerun this script."
+        return 1
+    fi
+    echo "Using $("$py" --version) for the virtual environment"
+
+    if "$py" -m venv "$VENV_DIR" && venv_is_healthy; then
+        return 0
+    fi
+
+    rm -rf "$VENV_DIR"
+    if command -v apt-get &> /dev/null; then
+        echo "[WARNING] Python venv/pip support is missing; installing ${py}-venv..."
+        sudo apt-get update -qq
+        sudo apt-get install -y "${py}-venv" python3-pip
+        "$py" -m venv "$VENV_DIR" && venv_is_healthy && return 0
+        rm -rf "$VENV_DIR"
+    fi
+    return 1
+}
+
+# Remove a leftover or outdated venv so it gets rebuilt below.
+if [ -d "$VENV_DIR" ] && ! venv_is_healthy; then
+    echo "[WARNING] Existing virtual environment is broken or uses Python older than ${PY_MIN_MAJOR}.${PY_MIN_MINOR}: $VENV_DIR"
+    echo "Removing it and creating a new one..."
+    rm -rf "$VENV_DIR"
+fi
+
 if [ -d "$VENV_DIR" ]; then
     echo "[INFO] Virtual environment already exists: $VENV_DIR"
     echo "Do you want to recreate it? (y/n)"
@@ -72,18 +137,30 @@ fi
 # Create virtual environment if it doesn't exist
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating virtual environment..."
-    mkdir -p "$(dirname "$VENV_DIR")"
-    python3 -m venv "$VENV_DIR"
+    if ! create_venv; then
+        echo "[ERROR] Failed to create a working virtual environment in $VENV_DIR"
+        echo "Install python3-venv and python3-pip manually, then rerun this script."
+        exit 1
+    fi
     echo "[OK] Virtual environment created: $VENV_DIR"
 fi
 
 # Activate virtual environment
 echo "Activating virtual environment..."
-source "$VENV_DIR/bin/activate"
+if ! source "$VENV_DIR/bin/activate"; then
+    echo "[ERROR] Could not activate virtual environment: $VENV_DIR"
+    exit 1
+fi
+
+# Always run pip through the venv's interpreter, so a missing 'pip' wrapper
+# script cannot break the installation.
+pip() {
+    "$VENV_DIR/bin/python" -m pip "$@"
+}
 
 # Upgrade pip
 echo "Upgrading pip..."
-pip install --upgrade pip -q
+pip install --upgrade pip -q || echo "[WARN] pip upgrade failed; continuing with the installed version."
 
 # Detect or install CUDA toolkit and GPU runtime for Numba/CUDA.
 detect_cuda_root() {
@@ -269,7 +346,10 @@ set -e
 # Install Python dependencies
 echo "Installing Python dependencies..."
 if [ -f "install/requirements.txt" ]; then
-    pip install -r install/requirements.txt -q
+    if ! pip install -r install/requirements.txt -q; then
+        echo "[ERROR] Failed to install Python dependencies from install/requirements.txt"
+        exit 1
+    fi
     echo "[OK] Python dependencies installed"
 else
     echo "[ERROR] install/requirements.txt not found!"

@@ -2,11 +2,44 @@
 FIDWAC v2 - Core DCT/IDCT/Zigzag functions (cached, vectorized)
 """
 
+import multiprocessing
+import os
+
 import numpy as np
 from scipy.fft import dct, idct
 from typing import Dict, Tuple
 
 _ZIGZAG_IDX_CACHE: Dict[int, np.ndarray] = {}
+
+_FFT_THREADS_MIN_SIZE = 1 << 19  # elements; below this the threads cost more than they save
+
+
+def fft_workers(size: int) -> int:
+    """Threads for one scipy.fft call over `size` elements. The transform runs along one axis, each
+    1-D line on its own, so the values do not depend on the thread count. Small arrays and the
+    worker processes of a Pool (their siblings hold the other cores) use one thread."""
+    if size < _FFT_THREADS_MIN_SIZE or multiprocessing.parent_process() is not None:
+        return 1
+    return os.cpu_count() or 1
+
+
+_FORKED = False
+
+
+def _mark_forked() -> None:
+    global _FORKED  # pylint: disable=global-statement
+    _FORKED = True
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_mark_forked)
+
+
+def in_forked_process() -> bool:
+    """True in a process created by fork(), such as a worker of the block Pool. numba's OpenMP layer
+    terminates such a process when it starts a parallel kernel after its parent has run one, and the
+    Pool then waits for the lost worker forever, so the callers use a serial kernel there."""
+    return _FORKED
 
 
 def _get_zigzag_indices(n: int) -> np.ndarray:
@@ -59,7 +92,11 @@ def dct2(a: np.ndarray, dct_type: int = 2) -> np.ndarray:
     if a.ndim == 2:
         return dct(dct(a.T, norm="ortho", type=dct_type).T, norm="ortho", type=dct_type)
     if a.ndim == 3:
-        return dct(dct(a, axis=2, norm="ortho", type=dct_type), axis=1, norm="ortho", type=dct_type)
+        w = fft_workers(a.size)
+        return dct(
+            dct(a, axis=2, norm="ortho", type=dct_type, workers=w),
+            axis=1, norm="ortho", type=dct_type, workers=w,
+        )
     else:
         raise ValueError(f"dct2 expects 2D or 3D input, got {a.shape}")
 
@@ -69,8 +106,10 @@ def idct2(a: np.ndarray, dct_type: int = 2) -> np.ndarray:
     if a.ndim == 2:
         return idct(idct(a.T, norm="ortho", type=dct_type).T, norm="ortho", type=dct_type)
     if a.ndim == 3:
+        w = fft_workers(a.size)
         return idct(
-            idct(a, axis=2, norm="ortho", type=dct_type), axis=1, norm="ortho", type=dct_type
+            idct(a, axis=2, norm="ortho", type=dct_type, workers=w),
+            axis=1, norm="ortho", type=dct_type, workers=w,
         )
     else:
         raise ValueError(f"idct2 expects 2D or 3D input, got {a.shape}")
@@ -103,4 +142,5 @@ __all__ = [
     "from_zigzag",
     "_get_zigzag_indices",
     "_get_idct_basis",
+    "fft_workers",
 ]

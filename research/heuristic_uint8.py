@@ -393,7 +393,7 @@ if __name__ == "__main__":
     # Try to load a sample uint8 image
     sample_paths = [
         "g:/FIDWAC_2026/dane/source/multi_uint_6ch/*.tif",
-        "/path/to/multi_uint_6ch/*.tif",
+        "/mnt/g/FIDWAC_2026/dane/source/multi_uint_6ch/*.tif",
     ]
 
     for pattern in sample_paths:
